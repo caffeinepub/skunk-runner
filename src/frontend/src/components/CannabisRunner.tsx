@@ -109,6 +109,7 @@ interface GameState {
   spliffsSmoked: number;
   enemiesKilled: number;
   nextPotWorldX: number;
+  deathFadeTimer: number;
 }
 
 // ─── Game Boy Palette ─────────────────────────────────────────────────────────
@@ -396,46 +397,80 @@ function drawBloodshotEyes(
     { cx: rx, cy: ry },
   ];
   for (const eye of eyes) {
+    // Stoned eye: wide ellipse (wider than tall) — not round
+    const ew = eyeR * 1.35;
+    const eh = eyeR * 0.72;
+
+    // White of eye (wide, squashed ellipse)
     ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.arc(eye.cx, eye.cy, eyeR, 0, Math.PI * 2);
+    ctx.ellipse(eye.cx, eye.cy, ew, eh, 0, 0, Math.PI * 2);
     ctx.fill();
-    const veinAngles = [0.4, 1.1, 2.0, 3.5, 4.8, 5.5];
+
+    // Bloodshot veins
+    const veinAngles = [0.3, 1.0, 1.9, 3.4, 4.7, 5.4];
     ctx.strokeStyle = "#cc0000";
-    ctx.lineWidth = 0.7;
+    ctx.lineWidth = 0.6;
     for (const va of veinAngles) {
+      const vx0 = eye.cx + Math.cos(va) * ew * 0.3;
+      const vy0 = eye.cy + Math.sin(va) * eh * 0.3;
+      const vx1 = eye.cx + Math.cos(va + 0.3) * ew * 0.7;
+      const vy1 = eye.cy + Math.sin(va + 0.3) * eh * 0.7;
+      const vx2 = eye.cx + Math.cos(va + 0.1) * ew * 0.95;
+      const vy2 = eye.cy + Math.sin(va + 0.1) * eh * 0.95;
       ctx.beginPath();
-      ctx.moveTo(
-        eye.cx + Math.cos(va) * eyeR * 0.35,
-        eye.cy + Math.sin(va) * eyeR * 0.35,
-      );
-      ctx.quadraticCurveTo(
-        eye.cx + Math.cos(va + 0.3) * eyeR * 0.65,
-        eye.cy + Math.sin(va + 0.3) * eyeR * 0.65,
-        eye.cx + Math.cos(va + 0.1) * eyeR * 0.92,
-        eye.cy + Math.sin(va + 0.1) * eyeR * 0.92,
-      );
+      ctx.moveTo(vx0, vy0);
+      ctx.quadraticCurveTo(vx1, vy1, vx2, vy2);
       ctx.stroke();
     }
+
+    // Pupil (small squashed ellipse)
     ctx.fillStyle = GB.darkest;
     ctx.beginPath();
-    ctx.arc(eye.cx, eye.cy, eyeR * 0.38, 0, Math.PI * 2);
+    ctx.ellipse(eye.cx, eye.cy, ew * 0.32, eh * 0.48, 0, 0, Math.PI * 2);
     ctx.fill();
+
+    // Highlight
     ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.arc(
-      eye.cx - eyeR * 0.12,
-      eye.cy - eyeR * 0.18,
-      eyeR * 0.14,
+    ctx.ellipse(
+      eye.cx - ew * 0.12,
+      eye.cy - eh * 0.22,
+      ew * 0.1,
+      eh * 0.16,
+      0,
       0,
       Math.PI * 2,
     );
     ctx.fill();
+
+    // Outline of eye shape
     ctx.strokeStyle = GB.darkest;
     ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.arc(eye.cx, eye.cy, eyeR, 0, Math.PI * 2);
+    ctx.ellipse(eye.cx, eye.cy, ew, eh, 0, 0, Math.PI * 2);
     ctx.stroke();
+
+    // Droopy heavy upper eyelid — slightly open (covers top ~30% of the eye)
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(eye.cx, eye.cy, ew + 1, eh + 1, 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = GB.dark;
+    ctx.beginPath();
+    // Lid droops down: starts above eye, curves down to cover top portion
+    ctx.moveTo(eye.cx - ew - 2, eye.cy - eh * 2);
+    ctx.lineTo(eye.cx + ew + 2, eye.cy - eh * 2);
+    ctx.lineTo(eye.cx + ew + 2, eye.cy - eh * 0.55);
+    ctx.quadraticCurveTo(
+      eye.cx,
+      eye.cy - eh * 0.1,
+      eye.cx - ew - 2,
+      eye.cy - eh * 0.55,
+    );
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -615,30 +650,84 @@ function drawPlayer(
     ctx.fillRect(Math.floor(cx + 21), armY, 12, 4);
     drawMickeyGlove(ctx, Math.floor(cx + 38), armY + 2, 8, true);
 
-    const legBaseY = top + p.height - 11;
-    const legW = 7;
-    const legH = 11;
+    // Two-segment legs with visible knees
+    const legBaseY = top + p.height - 12;
+    const legW = 6;
+    const thighH = 7;
+    const shinH = 8;
+    // Alternate animation: one leg forward (knee bent forward), one back
+    const leftBend = p.animFrame % 2 === 0 ? -3 : 2; // knee x offset
+    const rightBend = p.animFrame % 2 === 1 ? -3 : 2;
     const leftLift = p.animFrame % 2 === 0 ? -3 : 0;
     const rightLift = p.animFrame % 2 === 1 ? -3 : 0;
+
+    // ─ Left leg ─
+    const llThighX = Math.floor(cx - 11);
+    const llThighY = legBaseY + leftLift;
+    const llKneeX = llThighX + leftBend;
+    const llKneeY = llThighY + thighH;
+    // Thigh
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(cx - 11), legBaseY + leftLift, legW + 2, legH + 2);
-    ctx.fillRect(Math.floor(cx + 4), legBaseY + rightLift, legW + 2, legH + 2);
+    ctx.fillRect(llThighX - 1, llThighY - 1, legW + 2, thighH + 2);
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(cx - 10), legBaseY + leftLift + 1, legW, legH);
-    ctx.fillRect(Math.floor(cx + 5), legBaseY + rightLift + 1, legW, legH);
+    ctx.fillRect(llThighX, llThighY, legW, thighH);
+    // Knee bump
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(
-      Math.floor(cx - 12),
-      legBaseY + leftLift + legH - 1,
-      legW + 6,
-      4,
+    ctx.beginPath();
+    ctx.arc(llKneeX + legW / 2, llKneeY, legW * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.light;
+    ctx.beginPath();
+    ctx.arc(
+      llKneeX + legW / 2 - 0.5,
+      llKneeY - 0.5,
+      legW * 0.45,
+      0,
+      Math.PI * 2,
     );
-    ctx.fillRect(
-      Math.floor(cx + 3),
-      legBaseY + rightLift + legH - 1,
-      legW + 6,
-      4,
+    ctx.fill();
+    // Shin (offset by knee bend)
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(llKneeX - 1, llKneeY, legW + 2, shinH + 1);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(llKneeX, llKneeY, legW, shinH);
+    // Boot
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(llKneeX - 2, llKneeY + shinH - 1, legW + 6, 4);
+
+    // ─ Right leg ─
+    const rlThighX = Math.floor(cx + 5);
+    const rlThighY = legBaseY + rightLift;
+    const rlKneeX = rlThighX + rightBend;
+    const rlKneeY = rlThighY + thighH;
+    // Thigh
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlThighX - 1, rlThighY - 1, legW + 2, thighH + 2);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(rlThighX, rlThighY, legW, thighH);
+    // Knee bump
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.arc(rlKneeX + legW / 2, rlKneeY, legW * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.light;
+    ctx.beginPath();
+    ctx.arc(
+      rlKneeX + legW / 2 - 0.5,
+      rlKneeY - 0.5,
+      legW * 0.45,
+      0,
+      Math.PI * 2,
     );
+    ctx.fill();
+    // Shin
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlKneeX - 1, rlKneeY, legW + 2, shinH + 1);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(rlKneeX, rlKneeY, legW, shinH);
+    // Boot
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlKneeX - 2, rlKneeY + shinH - 1, legW + 6, 4);
   }
 
   ctx.restore();
@@ -1053,53 +1142,115 @@ function drawRouteArrow(ctx: CanvasRenderingContext2D, sx: number) {
   ctx.strokeRect(ax - 8, ay - 8, 18, 26);
 }
 
-function drawLeafCloud(
+function drawLeafCloudCutout(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   r: number,
 ) {
+  // Draw cannabis leaf silhouette centred at (cx, cy) with radius r
+  // Used with destination-out to cut a leaf shape out of the cloud
+  const lobes: [number, number, number][] = [
+    [0, 1.0, 0.22],
+    [0.58, 0.88, 0.18],
+    [-0.58, 0.88, 0.18],
+    [1.15, 0.72, 0.15],
+    [-1.15, 0.72, 0.15],
+    [1.68, 0.52, 0.12],
+    [-1.68, 0.52, 0.12],
+  ];
   ctx.save();
-  ctx.globalAlpha = 0.32;
   ctx.translate(cx, cy);
-
-  const lobes = [
-    [0, 1.0, 0.18],
-    [0.62, 0.86, 0.15],
-    [-0.62, 0.86, 0.15],
-    [1.22, 0.68, 0.12],
-    [-1.22, 0.68, 0.12],
-    [1.78, 0.48, 0.1],
-    [-1.78, 0.48, 0.1],
-  ] as const;
-
   for (const [angle, len, hw] of lobes) {
     const L = r * len;
     const W = r * hw;
-    const N = 5;
+    const N = 7;
     ctx.save();
     ctx.rotate(angle);
-    ctx.fillStyle = GB.light;
     ctx.beginPath();
     ctx.moveTo(0, 0);
     for (let i = 0; i <= N; i++) {
       const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.3);
-      const tooth = i % 2 === 1 ? W * 0.2 * taper : 0;
+      const taper = Math.sin(t * Math.PI) * (1 - t * 0.28);
+      const tooth = i % 2 === 1 ? W * 0.32 * taper : 0;
       ctx.lineTo(W * taper + tooth, -L * t);
     }
     ctx.lineTo(0, -L);
     for (let i = N; i >= 0; i--) {
       const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.3);
-      const tooth = i % 2 === 1 ? W * 0.2 * taper : 0;
+      const taper = Math.sin(t * Math.PI) * (1 - t * 0.28);
+      const tooth = i % 2 === 1 ? W * 0.32 * taper : 0;
       ctx.lineTo(-(W * taper + tooth), -L * t);
     }
     ctx.closePath();
     ctx.fill();
     ctx.restore();
   }
+  // Short stem
+  const stemW = Math.max(2, r * 0.12);
+  const stemH = r * 0.28;
+  ctx.fillRect(-stemW / 2, 0, stemW, stemH);
+  ctx.restore();
+}
 
+function drawLeafCloud(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+) {
+  // Each cloud is drawn onto an offscreen canvas so destination-out works
+  // without affecting the main canvas composite mode
+  const pad = r * 2.8;
+  const offW = Math.ceil(r * 3.4 + pad);
+  const offH = Math.ceil(r * 3.2 + pad);
+  const offCanvas = document.createElement("canvas");
+  offCanvas.width = offW;
+  offCanvas.height = offH;
+  const oc = offCanvas.getContext("2d");
+  if (!oc) return;
+
+  // Local origin inside the offscreen canvas
+  const ox = offW / 2;
+  const oy = offH / 2 + r * 0.3;
+
+  // ── Step 1: Draw fluffy cloud blob (multiple overlapping circles) ──────────
+  const grad = oc.createLinearGradient(ox, oy - r * 1.1, ox, oy + r * 0.7);
+  grad.addColorStop(0, "#c8eebc"); // pale mint top
+  grad.addColorStop(0.55, "#a8d898"); // mid sage
+  grad.addColorStop(1, "#5aab52"); // darker green underside
+
+  oc.fillStyle = grad;
+
+  // Central body blob
+  const blobs: [number, number, number][] = [
+    [0, 0, r * 1.1],
+    [-r * 0.75, -r * 0.18, r * 0.72],
+    [r * 0.75, -r * 0.18, r * 0.72],
+    [-r * 0.38, -r * 0.55, r * 0.58],
+    [r * 0.38, -r * 0.55, r * 0.58],
+    [0, -r * 0.7, r * 0.52],
+    [-r * 1.15, r * 0.08, r * 0.52],
+    [r * 1.15, r * 0.08, r * 0.52],
+    [-r * 0.6, r * 0.35, r * 0.62],
+    [r * 0.6, r * 0.35, r * 0.62],
+    [0, r * 0.42, r * 0.55],
+  ];
+  for (const [bx, by, br] of blobs) {
+    oc.beginPath();
+    oc.arc(ox + bx, oy + by, br, 0, Math.PI * 2);
+    oc.fill();
+  }
+
+  // ── Step 2: Cut out cannabis leaf from centre ───────────────────────────────
+  oc.globalCompositeOperation = "destination-out";
+  // The leaf cutout is centred slightly above the cloud centre
+  drawLeafCloudCutout(oc, ox, oy - r * 0.22, r * 0.72);
+
+  // ── Step 3: Stamp the offscreen cloud onto the main canvas ─────────────────
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  ctx.drawImage(offCanvas, cx - offW / 2, cy - offH / 2);
   ctx.restore();
 }
 
@@ -1125,18 +1276,25 @@ function drawBackground(ctx: CanvasRenderingContext2D, worldOffset: number) {
     ctx.arc(bx + 30, GROUND_Y - 4, 14, Math.PI, 0);
     ctx.fill();
   }
-  const cloudOffset = worldOffset * 0.15;
+  const cloudOffset = worldOffset * 0.12;
+  // More randomly spread: vary spacing, Y positions spread across full sky (22–110), varied sizes
   const cloudData = [
-    { i: 0, baseY: 45, scale: 1.0 },
-    { i: 1, baseY: 62, scale: 0.8 },
-    { i: 2, baseY: 38, scale: 1.2 },
-    { i: 3, baseY: 55, scale: 0.9 },
-    { i: 4, baseY: 48, scale: 1.1 },
-    { i: 5, baseY: 70, scale: 0.75 },
+    { i: 0, baseY: 38, scale: 1.0, spacing: 115 },
+    { i: 1, baseY: 82, scale: 0.68, spacing: 95 },
+    { i: 2, baseY: 28, scale: 1.35, spacing: 145 },
+    { i: 3, baseY: 65, scale: 0.85, spacing: 105 },
+    { i: 4, baseY: 100, scale: 0.58, spacing: 80 },
+    { i: 5, baseY: 48, scale: 1.15, spacing: 130 },
+    { i: 6, baseY: 20, scale: 0.92, spacing: 120 },
+    { i: 7, baseY: 75, scale: 1.25, spacing: 155 },
+    { i: 8, baseY: 55, scale: 0.72, spacing: 90 },
   ];
-  for (const { i, baseY, scale } of cloudData) {
-    const cx2 = ((i * 140 - cloudOffset + 60) % (CANVAS_W + 160)) - 80;
-    drawLeafCloud(ctx, cx2, baseY, 28 * scale);
+  for (const { i, baseY, scale, spacing } of cloudData) {
+    const cx2 =
+      ((i * spacing - cloudOffset * (0.08 + i * 0.01) + 60) %
+        (CANVAS_W + 200)) -
+      100;
+    drawLeafCloud(ctx, cx2, baseY, 36 * scale);
   }
 }
 
@@ -1622,6 +1780,7 @@ function createInitialGameState(hiScore: number): GameState {
     spliffsSmoked: 0,
     enemiesKilled: 0,
     nextPotWorldX: 350,
+    deathFadeTimer: 0,
   };
   for (let i = 0; i < 10; i++) spawnNewChunk(gs, CANVAS_W + i * 110);
   return gs;
@@ -1773,6 +1932,7 @@ function updateGame(
         spliffTimer: 0,
         spliffsSmoked: gs.spliffsSmoked,
         enemiesKilled: newEnemiesKilled,
+        deathFadeTimer: 18,
       };
     }
     events.push("hit");
@@ -1851,6 +2011,7 @@ function updateGame(
             spliffTimer: 0,
             spliffsSmoked: gs.spliffsSmoked,
             enemiesKilled: newEnemiesKilled,
+            deathFadeTimer: 18,
           };
         }
         events.push("hit");
@@ -1956,6 +2117,7 @@ function updateGame(
               spliffTimer: 0,
               spliffsSmoked: gs.spliffsSmoked,
               enemiesKilled: newEnemiesKilled,
+              deathFadeTimer: 18,
             };
           }
           events.push("hit");
@@ -2111,6 +2273,7 @@ function updateGame(
     spliffsSmoked: newSpliffsSmoked,
     enemiesKilled: newEnemiesKilled,
     nextPotWorldX: potWorldX,
+    deathFadeTimer: gs.deathFadeTimer,
   };
 }
 
@@ -2209,6 +2372,16 @@ export function SkunkRunner() {
           setScore(newGs.score);
           setLives(newGs.player.lives);
         }
+      }
+      // Tick down death fade timer when in gameover
+      if (
+        gsRef.current?.phase === "gameover" &&
+        gsRef.current.deathFadeTimer > 0
+      ) {
+        gsRef.current = {
+          ...gsRef.current,
+          deathFadeTimer: gsRef.current.deathFadeTimer - 1,
+        };
       }
       renderFrame(ctx!, gsRef.current!);
     }
@@ -2402,6 +2575,13 @@ export function SkunkRunner() {
       ctx.fillText("PAUSED", CANVAS_W / 2, CANVAS_H / 2 - 14);
       ctx.font = "11px 'Courier New', monospace";
       ctx.fillText("PRESS P TO RESUME", CANVAS_W / 2, CANVAS_H / 2 + 14);
+    }
+
+    // Fast death fade overlay
+    if (gs.phase === "gameover" && gs.deathFadeTimer > 0) {
+      const alpha = (gs.deathFadeTimer / 18) * 0.92;
+      ctx.fillStyle = `rgba(15,56,15,${alpha})`;
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     }
   }
 
