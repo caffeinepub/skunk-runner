@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang='en' class='dark'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+        <title>Skunk Runner</title>
+        <script>
+            // Set dark mode immediately to prevent white flash
+            document.documentElement.classList.add('dark');
+        </script>
+        <style>
+            /* Prevent white flash on load */
+            html, body {
+                background-color: oklch(0.12 0 0);
+                color: oklch(0.96 0 0);
+            }
+        </style>
+    </head>
+    <body>
+        <div id='root'></div>
+        <script type='module' src='/src/main.tsx'></script>
+    </body>
+</html>
