@@ -1,5 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+type ControlLayout = "A" | "B" | "C";
+type ButtonSize = "small" | "medium" | "large";
+
+interface GameSettings {
+  layout: ControlLayout;
+  buttonSize: ButtonSize;
+  gameSpeed: number;
+  soundOn: boolean;
+}
+
+const DEFAULT_SETTINGS: GameSettings = {
+  layout: "A",
+  buttonSize: "medium",
+  gameSpeed: 1.0,
+  soundOn: true,
+};
+
+function loadSettings(): GameSettings {
+  try {
+    const raw = localStorage.getItem("skunkrunner_settings");
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch (_) {}
+  return { ...DEFAULT_SETTINGS };
+}
+
+function saveSettings(s: GameSettings) {
+  try {
+    localStorage.setItem("skunkrunner_settings", JSON.stringify(s));
+  } catch (_) {}
+}
+
+const BTN_SIZE_STYLES: Record<ButtonSize, React.CSSProperties> = {
+  small: { padding: "6px 10px", fontSize: 16, minWidth: 52 },
+  medium: { padding: "10px 14px", fontSize: 22, minWidth: 72 },
+  large: { padding: "14px 20px", fontSize: 28, minWidth: 96 },
+};
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Player {
@@ -127,7 +166,7 @@ const GROUND_Y = CANVAS_H - 40;
 const GRAVITY = 1.4;
 const JUMP_FORCE = -17.0;
 const PLAYER_SPEED = 3.2;
-const SCROLL_BASE = 2.5;
+const SCROLL_BASE = 1.8;
 const PLAYER_START_X = 80;
 const GUARANTEED_SPAWN_INTERVAL = 50;
 const MIN_OBSTACLE_GAP = 150;
@@ -233,103 +272,113 @@ function drawCannabisLeafShape(
   fillColor: string,
   strokeColor: string,
 ) {
+  // Cannabis leaf silhouette: wide flat fan with 7 long narrow pointed fingers
+  // radiating from a single central point — like a spread hand.
+  // Each finger is a thin blade, widest near its middle, tapering to a sharp tip,
+  // with small serrations along the edges.
+
   ctx.save();
   ctx.translate(cx, cy);
 
-  const lobes = [
-    [0, 1.0, 0.22],
-    [0.58, 0.92, 0.2],
-    [-0.58, 0.92, 0.2],
-    [1.18, 0.8, 0.17],
-    [-1.18, 0.8, 0.17],
-    [1.72, 0.62, 0.14],
-    [-1.72, 0.62, 0.14],
-  ] as const;
+  // [angle (radians from straight up), length factor, half-width factor, extra-curl]
+  // Wider gaps between fingers so each leaf is clearly independent
+  const fingers: [number, number, number, number][] = [
+    [0, 1.0, 0.11, 0], // centre — tallest
+    [0.62, 0.86, 0.1, 0.06], // inner right — bigger gap
+    [-0.62, 0.86, 0.1, -0.06], // inner left  — bigger gap
+    [1.15, 0.74, 0.09, 0.08], // mid right — wider spread
+    [-1.15, 0.74, 0.09, -0.08], // mid left  — wider spread
+    [1.65, 0.58, 0.08, 0.42], // outer right — wider + drooping curl
+    [-1.65, 0.58, 0.08, -0.42], // outer left  — wider + drooping curl
+  ];
 
-  function drawLobe(
-    angleDelta: number,
+  function drawFinger(
+    angle: number,
     lenFactor: number,
     hwFactor: number,
-    fill: string,
-    outline: string,
+    curl = 0,
   ) {
     const L = r * lenFactor;
+    // Narrower at base: taper starts even thinner, peak width same, giving a more finger-like silhouette
     const W = r * hwFactor;
-    const N = 6;
+    // Serration: small regular triangular teeth along each side
+    const TEETH = 5;
+
     ctx.save();
-    ctx.rotate(angleDelta);
+    // Apply curl rotation first (droops the outer lobes downward)
+    ctx.rotate(angle + curl);
 
-    function serratedSide(side: 1 | -1) {
-      for (let i = 0; i <= N; i++) {
-        const t = i / N;
-        const taper = Math.sin(t * Math.PI) * (1 - t * 0.3);
-        const baseX = side * W * taper;
-        const baseY = -L * t;
-        const toothOut = i % 2 === 1 ? W * 0.28 * taper : 0;
-        ctx.lineTo(
-          baseX + side * toothOut,
-          baseY - L * 0.03 * (i % 2 === 1 ? 1 : 0),
-        );
-      }
+    // Width profile: very narrow base tapering up, widest at ~40%, then taper to sharp tip
+    function profile(t: number) {
+      if (t < 0.2) return W * (t / 0.2) * 0.55; // narrow base — pinches toward stem
+      if (t < 0.4) return W * (0.55 + 0.45 * ((t - 0.2) / 0.2)); // widens to full
+      return W * (1 - (t - 0.4) / 0.6); // taper to tip
     }
 
-    ctx.fillStyle = outline;
+    // Build right-side points with teeth, then left mirror
+    const pts: [number, number][] = [];
+    const steps = TEETH * 6;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const bw = profile(t);
+      const y = -L * t;
+      // Teeth: only on the blade (past base taper)
+      const toothAmp =
+        t > 0.12 && t < 0.95
+          ? bw * 0.28 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      pts.push([bw + toothAmp, y]);
+    }
+
+    // Outline (darker border)
+    ctx.fillStyle = strokeColor;
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    serratedSide(1);
-    ctx.lineTo(0, -L);
-    serratedSide(-1);
+    for (const [x, y] of pts) ctx.lineTo(x + 1.2, y);
+    ctx.lineTo(0, -L - 1.5);
+    for (let i = pts.length - 1; i >= 0; i--)
+      ctx.lineTo(-pts[i][0] - 1.2, pts[i][1]);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = fill;
+    // Fill
+    ctx.fillStyle = fillColor;
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.3);
-      const tooth = i % 2 === 1 ? W * 0.22 * taper : 0;
-      ctx.lineTo(W * taper + tooth, -L * t - L * 0.025 * (i % 2 === 1 ? 1 : 0));
-    }
+    for (const [x, y] of pts) ctx.lineTo(x, y);
     ctx.lineTo(0, -L);
-    for (let i = N; i >= 0; i--) {
-      const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.3);
-      const tooth = i % 2 === 1 ? W * 0.22 * taper : 0;
-      ctx.lineTo(
-        -(W * taper + tooth),
-        -L * t - L * 0.025 * (i % 2 === 1 ? 1 : 0),
-      );
-    }
+    for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(-pts[i][0], pts[i][1]);
     ctx.closePath();
     ctx.fill();
 
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = Math.max(0.8, r * 0.025);
-    ctx.globalAlpha = 0.6;
+    // Central midvein
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = Math.max(0.6, r * 0.018);
+    ctx.globalAlpha = 0.5;
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, -L * 0.9);
+    ctx.moveTo(0, -L * 0.1);
+    ctx.lineTo(0, -L * 0.88);
     ctx.stroke();
-
-    ctx.lineWidth = Math.max(0.5, r * 0.014);
-    ctx.globalAlpha = 0.35;
-    for (const s of [-1, 1] as const) {
-      ctx.beginPath();
-      ctx.moveTo(0, -L * 0.3);
-      ctx.quadraticCurveTo(s * W * 0.4, -L * 0.45, s * W * 0.65, -L * 0.38);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, -L * 0.55);
-      ctx.quadraticCurveTo(s * W * 0.35, -L * 0.68, s * W * 0.55, -L * 0.62);
-      ctx.stroke();
-    }
     ctx.globalAlpha = 1.0;
+
     ctx.restore();
   }
 
-  for (const [angle, len, hw] of lobes)
-    drawLobe(angle, len, hw, fillColor, strokeColor);
+  // Draw outer fingers first so centre overlaps them at the base
+  for (let i = fingers.length - 1; i >= 0; i--) {
+    const [a, l, w, c] = fingers[i];
+    drawFinger(a, l, w, c);
+  }
+
+  // Short petiole stem
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = Math.max(1.0, r * 0.045);
+  ctx.globalAlpha = 0.65;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, r * 0.2);
+  ctx.stroke();
+  ctx.globalAlpha = 1.0;
 
   ctx.restore();
 }
@@ -504,78 +553,228 @@ function drawSpliff(
   ctx.save();
   ctx.globalAlpha = alpha;
   const angle = -0.5;
-  const jointLen = size * 2.8;
+  const jointLen = size * 3.2;
   const jointW = size * 0.22;
+  // Narrow at mouth end (left), wide at lit/ember end (right)
+  const mouthW = jointW * 0.3; // narrow filter/mouth side
+  const emberW = jointW * 1.1; // wide burning end
+
   ctx.translate(cx + size * 0.3, my - size * 0.05);
   ctx.rotate(angle);
 
+  // ── Cone body (trapezoid): narrow left (mouth), wide right (lit end) ──
   ctx.fillStyle = "#f5f5dc";
   ctx.strokeStyle = GB.darkest;
   ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.roundRect(0, -jointW / 2, jointLen * 0.8, jointW, 2);
+  ctx.moveTo(0, -mouthW / 2);
+  ctx.lineTo(jointLen * 0.82, -emberW / 2);
+  ctx.lineTo(jointLen * 0.82, emberW / 2);
+  ctx.lineTo(0, mouthW / 2);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
+
+  // ── Filter tip (brown narrow end at mouth) ──
   ctx.fillStyle = "#8B6914";
   ctx.beginPath();
-  ctx.roundRect(-jointW * 0.2, -jointW / 2, jointLen * 0.14, jointW, 1);
-  ctx.fill();
-  ctx.fillStyle = "#e8e8c8";
-  ctx.beginPath();
-  ctx.ellipse(
-    jointLen * 0.8 + 2,
-    0,
-    jointW * 0.4,
-    jointW * 0.35,
-    0,
-    0,
-    Math.PI * 2,
-  );
+  ctx.moveTo(-mouthW * 0.3, -mouthW / 2);
+  ctx.lineTo(jointLen * 0.13, -mouthW / 2);
+  ctx.lineTo(jointLen * 0.13, mouthW / 2);
+  ctx.lineTo(-mouthW * 0.3, mouthW / 2);
+  ctx.closePath();
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(0,0,0,0.15)";
+  // ── Diagonal roll lines on paper body ──
+  ctx.strokeStyle = "rgba(0,0,0,0.13)";
   ctx.lineWidth = 0.5;
-  for (let i = 1; i < 4; i++) {
-    const lx = jointLen * 0.12 * i;
+  for (let i = 1; i < 5; i++) {
+    const tx = jointLen * 0.14 * i;
+    const wAtT = mouthW + (emberW - mouthW) * (tx / (jointLen * 0.82));
     ctx.beginPath();
-    ctx.moveTo(lx, -jointW / 2);
-    ctx.lineTo(lx, jointW / 2);
+    ctx.moveTo(tx, -wAtT / 2);
+    ctx.lineTo(tx, wAtT / 2);
     ctx.stroke();
   }
 
-  const emberX = jointLen * 0.8 + 3;
-  const grad = ctx.createRadialGradient(emberX, 0, 0, emberX, 0, jointW * 1.4);
-  grad.addColorStop(0, "rgba(255, 120, 0, 0.9)");
-  grad.addColorStop(0.5, "rgba(255, 60, 0, 0.5)");
+  // ── Ember glow at wide end ──
+  const emberX = jointLen * 0.82 + 2;
+  const grad = ctx.createRadialGradient(emberX, 0, 0, emberX, 0, emberW * 1.6);
+  grad.addColorStop(0, "rgba(255, 180, 0, 0.95)");
+  grad.addColorStop(0.4, "rgba(255, 70, 0, 0.6)");
   grad.addColorStop(1, "rgba(255, 0, 0, 0)");
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.arc(emberX, 0, jointW * 1.4, 0, Math.PI * 2);
+  ctx.arc(emberX, 0, emberW * 1.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#ff6600";
   ctx.beginPath();
-  ctx.arc(emberX, 0, jointW * 0.55, 0, Math.PI * 2);
+  ctx.arc(emberX, 0, emberW * 0.65, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#ffcc00";
+  ctx.fillStyle = "#ffdd00";
   ctx.beginPath();
-  ctx.arc(emberX, 0, jointW * 0.25, 0, Math.PI * 2);
+  ctx.arc(emberX, 0, emberW * 0.32, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(200,200,200,0.5)";
+  // ── Smoke wisps ──
+  ctx.strokeStyle = "rgba(200,200,200,0.45)";
   ctx.lineWidth = 1;
   for (let s = 0; s < 3; s++) {
     const sx = emberX + s * 2 - 2;
     ctx.beginPath();
-    ctx.moveTo(sx, -jointW);
+    ctx.moveTo(sx, -emberW);
     ctx.bezierCurveTo(
       sx + 3,
-      -jointW - 5,
+      -emberW - 5,
       sx - 3,
-      -jointW - 10,
+      -emberW - 10,
       sx + 2,
-      -jointW - 16,
+      -emberW - 16,
     );
     ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── Small HUD spliff icon (cone-shaped) ──────────────────────────────────────
+function drawHudSpliffIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+) {
+  // Tiny cone spliff: narrow at left (mouth), wide at right (ember)
+  const len = 14;
+  const mW = 1.5;
+  const eW = 4.5;
+  ctx.save();
+  ctx.fillStyle = "#f5f5dc";
+  ctx.strokeStyle = GB.darkest;
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(x, y - mW / 2);
+  ctx.lineTo(x + len, y - eW / 2);
+  ctx.lineTo(x + len, y + eW / 2);
+  ctx.lineTo(x, y + mW / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Filter tip
+  ctx.fillStyle = "#8B6914";
+  ctx.fillRect(x - 1, y - mW / 2, 3, mW);
+  // Ember glow
+  const grad = ctx.createRadialGradient(x + len + 1, y, 0, x + len + 1, y, eW);
+  grad.addColorStop(0, "rgba(255,150,0,0.95)");
+  grad.addColorStop(1, "rgba(255,0,0,0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(x + len + 1, y, eW, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ff6600";
+  ctx.beginPath();
+  ctx.arc(x + len + 1, y, eW * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Draws a small curled leaf shape as a foot — like a little cannabis leaf curling outward
+function drawCurledLeafFoot(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  topY: number,
+  r: number,
+  facingRight: boolean,
+) {
+  ctx.save();
+  ctx.translate(cx, topY);
+  // Mirror for left/right foot
+  if (!facingRight) ctx.scale(-1, 1);
+
+  // The foot is a small 3-finger mini leaf curled to the side
+  // Centre finger points forward (right), two side fingers curl up and down
+  const footFingers: [number, number, number, number][] = [
+    [-Math.PI / 2, 1.0, 0.28, 0], // main toe — points right (forward)
+    [-Math.PI / 2 + 0.55, 0.72, 0.2, 0.15], // upper curl — angled slightly up
+    [-Math.PI / 2 - 0.55, 0.72, 0.2, -0.15], // lower curl — angled slightly down
+  ];
+
+  for (const [angle, lenFactor, hwFactor, curl] of footFingers) {
+    const L = r * lenFactor;
+    const W = r * hwFactor;
+    const TEETH = 3;
+    const steps = TEETH * 5;
+    ctx.save();
+    ctx.rotate(angle + curl);
+    // Outline
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const bw =
+        t < 0.25
+          ? W * (t / 0.25) * 0.5
+          : t < 0.5
+            ? W * (0.5 + 0.5 * ((t - 0.25) / 0.25))
+            : W * (1 - (t - 0.5) / 0.5);
+      const toothAmp =
+        t > 0.15 && t < 0.9
+          ? bw * 0.22 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(bw + toothAmp + 1.0, -L * t);
+    }
+    ctx.lineTo(0, -L - 1.2);
+    for (let i = steps; i >= 0; i--) {
+      const t = i / steps;
+      const bw =
+        t < 0.25
+          ? W * (t / 0.25) * 0.5
+          : t < 0.5
+            ? W * (0.5 + 0.5 * ((t - 0.25) / 0.25))
+            : W * (1 - (t - 0.5) / 0.5);
+      const toothAmp =
+        t > 0.15 && t < 0.9
+          ? bw * 0.22 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(-(bw + toothAmp + 1.0), -L * t);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // Fill
+    ctx.fillStyle = GB.dark;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const bw =
+        t < 0.25
+          ? W * (t / 0.25) * 0.5
+          : t < 0.5
+            ? W * (0.5 + 0.5 * ((t - 0.25) / 0.25))
+            : W * (1 - (t - 0.5) / 0.5);
+      const toothAmp =
+        t > 0.15 && t < 0.9
+          ? bw * 0.22 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(bw + toothAmp, -L * t);
+    }
+    ctx.lineTo(0, -L);
+    for (let i = steps; i >= 0; i--) {
+      const t = i / steps;
+      const bw =
+        t < 0.25
+          ? W * (t / 0.25) * 0.5
+          : t < 0.5
+            ? W * (0.5 + 0.5 * ((t - 0.25) / 0.25))
+            : W * (1 - (t - 0.5) / 0.5);
+      const toothAmp =
+        t > 0.15 && t < 0.9
+          ? bw * 0.22 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(-(bw + toothAmp), -L * t);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -608,55 +807,87 @@ function drawPlayer(
     ctx.translate(0, leafCY / 0.65 - leafCY);
     drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
     ctx.restore();
-    drawBloodshotEyes(ctx, cx - 5, top + 14, cx + 5, top + 14, 4.5);
-    drawLeafMouth(ctx, cx, top + 21, 10);
+    drawBloodshotEyes(ctx, cx - 5, top + 11, cx + 5, top + 11, 4.5);
+    drawLeafMouth(ctx, cx, top + 19, 10);
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(cx - 20), top + 15, 5, 4);
-    ctx.fillRect(Math.floor(cx + 15), top + 15, 5, 4);
+    ctx.fillRect(Math.floor(cx - 20), top + 14, 5, 4);
+    ctx.fillRect(Math.floor(cx + 15), top + 14, 5, 4);
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(cx - 19), top + 15, 4, 3);
-    ctx.fillRect(Math.floor(cx + 16), top + 15, 4, 3);
-    drawMickeyGlove(ctx, Math.floor(cx - 22), top + 17, 6, false);
-    drawMickeyGlove(ctx, Math.floor(cx + 22), top + 17, 6, true);
+    ctx.fillRect(Math.floor(cx - 19), top + 14, 4, 3);
+    ctx.fillRect(Math.floor(cx + 16), top + 14, 4, 3);
+    drawMickeyGlove(ctx, Math.floor(cx - 22), top + 16, 6, false);
+    drawMickeyGlove(ctx, Math.floor(cx + 22), top + 16, 6, true);
   } else {
-    const leafCX = cx;
-    const leafCY = top + 16;
-    const leafR = 34;
+    // ── Pluto-style swagger sway (only on ground, not ducking) ──
+    const isMoving = Math.abs(p.vx) > 0.3;
+    const swayX = p.onGround && isMoving ? (p.animFrame % 2 === 0 ? -2 : 2) : 0;
+    const swayAngle =
+      p.onGround && isMoving ? (p.animFrame % 2 === 0 ? -0.08 : 0.08) : 0;
+
+    ctx.save();
+    ctx.translate(cx + swayX, top + p.height / 2);
+    ctx.rotate(swayAngle);
+    ctx.translate(-cx - swayX, -top - p.height / 2);
+
+    const leafCX = cx + swayX;
+    // Bigger leaf radius so more leaf is visible below the face
+    const leafR = 40;
+    // Leaf centre raised slightly so lower lobes extend further down, giving more exposed bottom leaf
+    const leafCY = top + 14;
     drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
 
-    const eyeY = top + 16;
-    drawBloodshotEyes(ctx, cx - 7, eyeY, cx + 7, eyeY, 6);
-    drawLeafMouth(ctx, cx, top + 27, 13);
+    // Eyes sit higher up on the leaf face
+    const eyeY = top + 10;
+    drawBloodshotEyes(ctx, leafCX - 8, eyeY, leafCX + 8, eyeY, 6);
+    drawLeafMouth(ctx, leafCX, top + 22, 13);
 
-    if (spliffAlpha > 0) drawSpliff(ctx, cx, top + 27, 13, spliffAlpha);
+    if (spliffAlpha > 0) drawSpliff(ctx, leafCX, top + 22, 13, spliffAlpha);
 
     ctx.strokeStyle = GB.darkest;
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(cx - 13, eyeY - 7);
-    ctx.quadraticCurveTo(cx, eyeY - 10, cx + 13, eyeY - 7);
+    ctx.moveTo(leafCX - 13, eyeY - 7);
+    ctx.quadraticCurveTo(leafCX, eyeY - 10, leafCX + 13, eyeY - 7);
     ctx.stroke();
 
+    // Arms — positioned so hand/glove is half-inside and half-outside the leaf body
     const armBob = p.animFrame % 2 === 0 ? -1 : 1;
-    const armY = top + 20 + armBob;
+    const leftArmBob = isMoving && p.onGround ? -armBob * 3 : armBob;
+    const rightArmBob = isMoving && p.onGround ? armBob * 3 : armBob;
+    // Arm starts inside the leaf (leafCX ± 22) so the forearm spans across the body edge
+    const armY = top + 22;
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(cx - 34), armY - 1, 14, 6);
+    ctx.fillRect(Math.floor(leafCX - 30), armY + leftArmBob - 1, 14, 6);
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(cx - 33), armY, 12, 4);
-    drawMickeyGlove(ctx, Math.floor(cx - 38), armY + 2, 8, false);
+    ctx.fillRect(Math.floor(leafCX - 29), armY + leftArmBob, 12, 4);
+    // Glove sits half out — placed at leafCX - 32 so centre is at body edge
+    drawMickeyGlove(
+      ctx,
+      Math.floor(leafCX - 32),
+      armY + leftArmBob + 2,
+      8,
+      false,
+    );
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(cx + 20), armY - 1, 14, 6);
+    ctx.fillRect(Math.floor(leafCX + 16), armY + rightArmBob - 1, 14, 6);
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(cx + 21), armY, 12, 4);
-    drawMickeyGlove(ctx, Math.floor(cx + 38), armY + 2, 8, true);
+    ctx.fillRect(Math.floor(leafCX + 17), armY + rightArmBob, 12, 4);
+    drawMickeyGlove(
+      ctx,
+      Math.floor(leafCX + 32),
+      armY + rightArmBob + 2,
+      8,
+      true,
+    );
 
-    // Two-segment legs with visible knees
+    ctx.restore();
+
+    // Two-segment legs with visible knees, curled leaf feet instead of boots
     const legBaseY = top + p.height - 12;
     const legW = 6;
     const thighH = 7;
     const shinH = 8;
-    // Alternate animation: one leg forward (knee bent forward), one back
-    const leftBend = p.animFrame % 2 === 0 ? -3 : 2; // knee x offset
+    const leftBend = p.animFrame % 2 === 0 ? -3 : 2;
     const rightBend = p.animFrame % 2 === 1 ? -3 : 2;
     const leftLift = p.animFrame % 2 === 0 ? -3 : 0;
     const rightLift = p.animFrame % 2 === 1 ? -3 : 0;
@@ -666,12 +897,10 @@ function drawPlayer(
     const llThighY = legBaseY + leftLift;
     const llKneeX = llThighX + leftBend;
     const llKneeY = llThighY + thighH;
-    // Thigh
     ctx.fillStyle = GB.darkest;
     ctx.fillRect(llThighX - 1, llThighY - 1, legW + 2, thighH + 2);
     ctx.fillStyle = GB.dark;
     ctx.fillRect(llThighX, llThighY, legW, thighH);
-    // Knee bump
     ctx.fillStyle = GB.darkest;
     ctx.beginPath();
     ctx.arc(llKneeX + legW / 2, llKneeY, legW * 0.7, 0, Math.PI * 2);
@@ -686,26 +915,22 @@ function drawPlayer(
       Math.PI * 2,
     );
     ctx.fill();
-    // Shin (offset by knee bend)
     ctx.fillStyle = GB.darkest;
     ctx.fillRect(llKneeX - 1, llKneeY, legW + 2, shinH + 1);
     ctx.fillStyle = GB.dark;
     ctx.fillRect(llKneeX, llKneeY, legW, shinH);
-    // Boot
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(llKneeX - 2, llKneeY + shinH - 1, legW + 6, 4);
+    // Curled leaf foot (left) — a small cannabis-style curled leaf replacing the boot
+    drawCurledLeafFoot(ctx, llKneeX + legW / 2, llKneeY + shinH, 9, false);
 
     // ─ Right leg ─
     const rlThighX = Math.floor(cx + 5);
     const rlThighY = legBaseY + rightLift;
     const rlKneeX = rlThighX + rightBend;
     const rlKneeY = rlThighY + thighH;
-    // Thigh
     ctx.fillStyle = GB.darkest;
     ctx.fillRect(rlThighX - 1, rlThighY - 1, legW + 2, thighH + 2);
     ctx.fillStyle = GB.dark;
     ctx.fillRect(rlThighX, rlThighY, legW, thighH);
-    // Knee bump
     ctx.fillStyle = GB.darkest;
     ctx.beginPath();
     ctx.arc(rlKneeX + legW / 2, rlKneeY, legW * 0.7, 0, Math.PI * 2);
@@ -720,14 +945,12 @@ function drawPlayer(
       Math.PI * 2,
     );
     ctx.fill();
-    // Shin
     ctx.fillStyle = GB.darkest;
     ctx.fillRect(rlKneeX - 1, rlKneeY, legW + 2, shinH + 1);
     ctx.fillStyle = GB.dark;
     ctx.fillRect(rlKneeX, rlKneeY, legW, shinH);
-    // Boot
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(rlKneeX - 2, rlKneeY + shinH - 1, legW + 6, 4);
+    // Curled leaf foot (right)
+    drawCurledLeafFoot(ctx, rlKneeX + legW / 2, rlKneeY + shinH, 9, true);
   }
 
   ctx.restore();
@@ -1148,48 +1371,67 @@ function drawLeafCloudCutout(
   cy: number,
   r: number,
 ) {
-  // Draw cannabis leaf silhouette centred at (cx, cy) with radius r
-  // Used with destination-out to cut a leaf shape out of the cloud
-  const lobes: [number, number, number][] = [
-    [0, 1.0, 0.22],
-    [0.58, 0.88, 0.18],
-    [-0.58, 0.88, 0.18],
-    [1.15, 0.72, 0.15],
-    [-1.15, 0.72, 0.15],
-    [1.68, 0.52, 0.12],
-    [-1.68, 0.52, 0.12],
+  // Matching fan silhouette — wider gaps so fingers are clearly independent
+  const fingers: [number, number, number, number][] = [
+    [0, 1.0, 0.13, 0],
+    [0.62, 0.86, 0.12, 0.06],
+    [-0.62, 0.86, 0.12, -0.06],
+    [1.15, 0.74, 0.11, 0.08],
+    [-1.15, 0.74, 0.11, -0.08],
+    [1.65, 0.58, 0.09, 0.42],
+    [-1.65, 0.58, 0.09, -0.42],
   ];
+
   ctx.save();
   ctx.translate(cx, cy);
-  for (const [angle, len, hw] of lobes) {
-    const L = r * len;
-    const W = r * hw;
-    const N = 7;
+
+  for (const [angle, lenFactor, hwFactor, curl] of fingers) {
+    const L = r * lenFactor;
+    const W = r * hwFactor;
+    const TEETH = 4;
+    const steps = TEETH * 6;
+
     ctx.save();
-    ctx.rotate(angle);
+    ctx.rotate(angle + curl);
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.28);
-      const tooth = i % 2 === 1 ? W * 0.32 * taper : 0;
-      ctx.lineTo(W * taper + tooth, -L * t);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const bw =
+        t < 0.2
+          ? W * (t / 0.2) * 0.55
+          : t < 0.4
+            ? W * (0.55 + 0.45 * ((t - 0.2) / 0.2))
+            : W * (1 - (t - 0.4) / 0.6);
+      const toothAmp =
+        t > 0.12 && t < 0.95
+          ? bw * 0.25 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(bw + toothAmp, -L * t);
     }
     ctx.lineTo(0, -L);
-    for (let i = N; i >= 0; i--) {
-      const t = i / N;
-      const taper = Math.sin(t * Math.PI) * (1 - t * 0.28);
-      const tooth = i % 2 === 1 ? W * 0.32 * taper : 0;
-      ctx.lineTo(-(W * taper + tooth), -L * t);
+    for (let i = steps; i >= 0; i--) {
+      const t = i / steps;
+      const bw =
+        t < 0.2
+          ? W * (t / 0.2) * 0.55
+          : t < 0.4
+            ? W * (0.55 + 0.45 * ((t - 0.2) / 0.2))
+            : W * (1 - (t - 0.4) / 0.6);
+      const toothAmp =
+        t > 0.12 && t < 0.95
+          ? bw * 0.25 * Math.max(0, Math.sin(t * TEETH * Math.PI))
+          : 0;
+      ctx.lineTo(-(bw + toothAmp), -L * t);
     }
     ctx.closePath();
     ctx.fill();
     ctx.restore();
   }
-  // Short stem
-  const stemW = Math.max(2, r * 0.12);
-  const stemH = r * 0.28;
-  ctx.fillRect(-stemW / 2, 0, stemW, stemH);
+
+  // Stem
+  const stemW = Math.max(1.5, r * 0.1);
+  ctx.fillRect(-stemW / 2, 0, stemW, r * 0.22);
   ctx.restore();
 }
 
@@ -1244,8 +1486,8 @@ function drawLeafCloud(
 
   // ── Step 2: Cut out cannabis leaf from centre ───────────────────────────────
   oc.globalCompositeOperation = "destination-out";
-  // The leaf cutout is centred slightly above the cloud centre
-  drawLeafCloudCutout(oc, ox, oy - r * 0.22, r * 0.72);
+  // Bigger cutout (0.92×r) centred slightly above cloud centre for a clear leaf shape
+  drawLeafCloudCutout(oc, ox, oy - r * 0.18, r * 0.92);
 
   // ── Step 3: Stamp the offscreen cloud onto the main canvas ─────────────────
   ctx.save();
@@ -1330,12 +1572,7 @@ function drawHUD(ctx: CanvasRenderingContext2D, gs: GameState) {
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   const midY = sbY + sbH / 2;
-  ctx.fillStyle = "#f5f5dc";
-  ctx.fillRect(sbX + 4, midY - 2, 10, 4);
-  ctx.fillStyle = "#ff6600";
-  ctx.beginPath();
-  ctx.arc(sbX + 15, midY, 2, 0, Math.PI * 2);
-  ctx.fill();
+  drawHudSpliffIcon(ctx, sbX + 2, midY);
   ctx.fillStyle = GB.lightest;
   ctx.fillText(
     `SPLIFFS:${String(gs.spliffsSmoked).padStart(3, "0")}`,
@@ -1735,7 +1972,7 @@ const ROUTE_ARROW_WORLD_POSITIONS: number[] = [
 
 // ─── Initial state ────────────────────────────────────────────────────────────
 
-function createInitialGameState(hiScore: number): GameState {
+function createInitialGameState(hiScore: number, gameSpeed = 1.0): GameState {
   const gs: GameState = {
     phase: "playing",
     score: 0,
@@ -1769,7 +2006,7 @@ function createInitialGameState(hiScore: number): GameState {
     spawnTimer: 0,
     platformSeed: 42,
     lastFrameTime: 0,
-    scrollSpeed: SCROLL_BASE,
+    scrollSpeed: SCROLL_BASE * gameSpeed,
     lastGuaranteedSpawnDist: 0,
     lastObstacleWorldX: -MIN_OBSTACLE_GAP * 2,
     lastEnemyFrame: -MAX_ENEMY_INTERVAL_FRAMES,
@@ -2242,9 +2479,19 @@ function updateGame(
   const culledPlatforms = tempGs.platforms.filter(
     (pl) => pl.moving || pl.x + pl.width > newWorldOffset - 200,
   );
+  // The gameSpeed multiplier is preserved by basing ramp on current scrollSpeed's ratio to SCROLL_BASE
+  // Approximate the initial multiplier from the current state
+  const gsMultiplier =
+    gs.distance < 50
+      ? gs.scrollSpeed / SCROLL_BASE
+      : Math.max(
+          0.5,
+          gs.scrollSpeed /
+            (SCROLL_BASE + Math.min(gs.distance / 3000, difficultyLevel * 0.3)),
+        );
   const newScrollSpeed = Math.min(
-    SCROLL_BASE + gs.distance / 2000,
-    SCROLL_BASE + difficultyLevel * 0.4,
+    SCROLL_BASE * gsMultiplier + gs.distance / 3000,
+    SCROLL_BASE * gsMultiplier + difficultyLevel * 0.3,
   );
 
   return {
@@ -2286,17 +2533,60 @@ export function SkunkRunner() {
   const rafRef = useRef<number>(0);
   const frameCountRef = useRef(0);
   const hiScoreRef = useRef(0);
-  const touchRef = useRef({ left: false, jump: false });
+  const touchRef = useRef({ left: false, jump: false, right: false });
   const soundRef = useRef<ReturnType<typeof createSoundEngine> | null>(null);
-
-  const [phase, setPhase] = useState<
-    "start" | "playing" | "paused" | "gameover"
+  const soundOnRef = useRef(true);
+  const gameSpeedRef = useRef(1.0);
+  const phaseRef = useRef<
+    "start" | "settings" | "playing" | "paused" | "gameover"
   >("start");
+  const settingsReturnPhaseRef = useRef<"start" | "paused">("start");
+
+  // Load Press Start 2P retro pixel font
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href =
+      "https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap";
+    document.head.appendChild(link);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, []);
+
+  const [phase, setPhaseState] = useState<
+    "start" | "settings" | "playing" | "paused" | "gameover"
+  >("start");
+
+  const setPhase = useCallback(
+    (p: "start" | "settings" | "playing" | "paused" | "gameover") => {
+      phaseRef.current = p;
+      setPhaseState(p);
+    },
+    [],
+  );
   const [score, setScore] = useState(0);
   const [hiScore, setHiScore] = useState(0);
   const [_lives, setLives] = useState(3);
   const [spliffsSmoked, setSpliffsSmoked] = useState(0);
   const [enemiesKilled, setEnemiesKilled] = useState(0);
+  const [settings, setSettings] = useState<GameSettings>(loadSettings);
+
+  // Sync refs with settings state
+  useEffect(() => {
+    soundOnRef.current = settings.soundOn;
+    gameSpeedRef.current = settings.gameSpeed;
+  }, [settings]);
+
+  const updateSettings = useCallback((patch: Partial<GameSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveSettings(next);
+      soundOnRef.current = next.soundOn;
+      gameSpeedRef.current = next.gameSpeed;
+      return next;
+    });
+  }, []);
 
   const ensureSound = useCallback(() => {
     if (!soundRef.current) soundRef.current = createSoundEngine();
@@ -2305,14 +2595,17 @@ export function SkunkRunner() {
 
   const startGame = useCallback(() => {
     const snd = ensureSound();
-    gsRef.current = createInitialGameState(hiScoreRef.current);
+    gsRef.current = createInitialGameState(
+      hiScoreRef.current,
+      gameSpeedRef.current,
+    );
     setPhase("playing");
     setScore(0);
     setLives(3);
     setSpliffsSmoked(0);
     setEnemiesKilled(0);
-    snd.start();
-  }, [ensureSound]);
+    if (soundOnRef.current) snd.start();
+  }, [ensureSound, setPhase]);
 
   const togglePause = useCallback(() => {
     if (!gsRef.current) return;
@@ -2323,7 +2616,19 @@ export function SkunkRunner() {
       gsRef.current.phase = "playing";
       setPhase("playing");
     }
-  }, []);
+  }, [setPhase]);
+
+  const goToMainMenu = useCallback(() => {
+    if (gsRef.current) gsRef.current.phase = "paused"; // keep paused while transitioning
+    gsRef.current = null;
+    setPhase("start");
+  }, [setPhase]);
+
+  const openSettingsFromPause = useCallback(() => {
+    if (gsRef.current) gsRef.current.phase = "paused";
+    settingsReturnPhaseRef.current = "paused";
+    setPhase("settings");
+  }, [setPhase]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2331,25 +2636,38 @@ export function SkunkRunner() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
-    let prevTime = 0;
+    let prevTime = -1;
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        prevTime = -1; // reset so next frame doesn't get a massive dt
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     function loop(time: number) {
       rafRef.current = requestAnimationFrame(loop);
       const gs = gsRef.current;
-      if (!gs || gs.phase === "start") {
-        drawStartScreen(ctx!);
+      const currentPhase = phaseRef.current;
+      // Render start animation for start/settings phases
+      if (!gs || currentPhase === "settings" || currentPhase === "start") {
+        prevTime = time;
+        // Never suppress the "PRESS SPACE" prompt - settings panel is an overlay, not a phase replacement
+        drawStartScreen(ctx!, false);
         return;
       }
-      const dt = Math.min((time - prevTime) / 16.67, 3);
+      if (prevTime < 0) prevTime = time;
+      const dt = Math.min((time - prevTime) / 16.67, 1);
       prevTime = time;
       frameCountRef.current++;
       if (gs.phase === "playing") {
         const keys = new Set(keysRef.current);
         if (touchRef.current.left) keys.add("ArrowLeft");
         if (touchRef.current.jump) keys.add("Space");
+        if (touchRef.current.right) keys.add("ArrowRight");
         const newGs = updateGame(gs, keys, dt, frameCountRef.current);
         gsRef.current = newGs;
-        if (soundRef.current && newGs.events.length > 0) {
+        if (soundRef.current && soundOnRef.current && newGs.events.length > 0) {
           const snd = soundRef.current;
           for (const ev of newGs.events) {
             if (ev === "jump") snd.jump();
@@ -2387,77 +2705,237 @@ export function SkunkRunner() {
     }
 
     rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, []);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [setPhase]);
 
-  function drawStartScreen(ctx: CanvasRenderingContext2D) {
+  function drawStartScreen(
+    ctx: CanvasRenderingContext2D,
+    suppressPrompt = false,
+  ) {
+    const now = Date.now();
+
+    // ── Background ──────────────────────────────────────────────────────────────
     ctx.fillStyle = GB.lightest;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    // Retro stripe background
     ctx.fillStyle = GB.light;
     for (let i = 0; i < 6; i++) ctx.fillRect(i * 80, 0, 40, CANVAS_H);
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(40, 55, CANVAS_W - 80, 80);
-    ctx.fillStyle = GB.light;
-    ctx.fillRect(44, 59, CANVAS_W - 88, 72);
-    ctx.fillStyle = GB.darkest;
-    ctx.font = "bold 26px 'Courier New', monospace";
+
+    // ── Drifting cannabis-leaf clouds ────────────────────────────────────────────
+    const cloudT = now * 0.00008;
+    const introClouds = [
+      { baseX: 60, cy: 32, r: 28, speed: 1.0 },
+      { baseX: 280, cy: 22, r: 22, speed: 0.7 },
+      { baseX: 420, cy: 42, r: 32, speed: 1.2 },
+    ];
+    for (const { baseX, cy, r, speed } of introClouds) {
+      const cx2 = ((baseX + cloudT * speed * 60) % (CANVAS_W + 120)) - 60;
+      drawLeafCloud(ctx, cx2, cy, r);
+    }
+
+    // ── Title block ──────────────────────────────────────────────────────────────
+    const PIXEL_FONT = "'Press Start 2P', 'Courier New', monospace";
+    const titleY1 = 52;
+    const titleY2 = 86;
+
+    // Shadow layers for blocky outline effect (draw 3 times offset)
+    const shadowOffsets = [
+      [3, 3],
+      [2, 2],
+      [1, 1],
+    ];
+    for (const [ox, oy] of shadowOffsets) {
+      ctx.font = `32px ${PIXEL_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = GB.darkest;
+      ctx.fillText("SKUNK", CANVAS_W / 2 + ox, titleY1 + oy);
+      ctx.fillText("RUNNER", CANVAS_W / 2 + ox, titleY2 + oy);
+    }
+    // Main title text
+    ctx.font = `32px ${PIXEL_FONT}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("SKUNK", CANVAS_W / 2, 83);
-    ctx.fillText("RUNNER", CANVAS_W / 2, 113);
+    ctx.fillStyle = GB.lightest;
+    ctx.fillText("SKUNK", CANVAS_W / 2, titleY1);
+    ctx.fillStyle = GB.light;
+    ctx.fillText("RUNNER", CANVAS_W / 2, titleY2);
 
+    // ── Dancing character ─────────────────────────────────────────────────────────
     const px = CANVAS_W / 2;
-    const py = 175;
-    drawCannabisLeafShape(ctx, px, py - 6, 28, GB.dark, GB.darkest);
-    drawBloodshotEyes(ctx, px - 7, py - 8, px + 7, py - 8, 6);
-    drawLeafMouth(ctx, px, py + 4, 13);
-    ctx.strokeStyle = GB.darkest;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(px - 13, py - 15);
-    ctx.quadraticCurveTo(px, py - 18, px + 13, py - 15);
-    ctx.stroke();
-    const armY2 = py - 4;
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(px - 34), armY2 - 1, 14, 6);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(px - 33), armY2, 12, 4);
-    drawMickeyGlove(ctx, Math.floor(px - 38), armY2 + 2, 8, false);
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(px + 20), armY2 - 1, 14, 6);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(px + 21), armY2, 12, 4);
-    drawMickeyGlove(ctx, Math.floor(px + 38), armY2 + 2, 8, true);
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(px - 11, py + 18, 9, 12);
-    ctx.fillRect(px + 4, py + 18, 9, 12);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(px - 10, py + 19, 7, 10);
-    ctx.fillRect(px + 5, py + 19, 7, 10);
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(px - 12, py + 28, 11, 4);
-    ctx.fillRect(px + 3, py + 28, 11, 4);
+    const leafR = 52;
+    // Dance frame: 6-frame cycle at 200ms each
+    const danceFrame = Math.floor(now / 200) % 6;
+    // Body bounce: frame 4 = up, frame 5 = down (squash), else neutral
+    const bodyBounce = danceFrame === 4 ? -4 : danceFrame === 5 ? 3 : 0;
+    // Body lean angle
+    const bodyLean = danceFrame === 1 ? 0.15 : danceFrame === 3 ? -0.15 : 0;
+    // Arm angles:
+    // frame 0: left arm up, right down
+    // frame 1: both at sides
+    // frame 2: right arm up, left down
+    // frame 3: both at sides
+    // frame 4: both raised
+    // frame 5: both lowered
+    const leftArmUp =
+      danceFrame === 0
+        ? -18
+        : danceFrame === 4
+          ? -14
+          : danceFrame === 5
+            ? 6
+            : 2;
+    const rightArmUp =
+      danceFrame === 2
+        ? -18
+        : danceFrame === 4
+          ? -14
+          : danceFrame === 5
+            ? 6
+            : 2;
 
+    const py = 165 + bodyBounce;
+
+    ctx.save();
+    ctx.translate(px, py + leafR * 0.5);
+    ctx.rotate(bodyLean);
+    ctx.translate(-px, -py - leafR * 0.5);
+
+    // Leaf body
+    drawCannabisLeafShape(ctx, px, py, leafR, GB.dark, GB.darkest);
+
+    // Eyes
+    const eyeY = py + 2;
+    drawBloodshotEyes(ctx, px - 13, eyeY, px + 13, eyeY, 11);
+
+    // Mouth + spliff always visible on intro
+    drawLeafMouth(ctx, px, py + 20, 22);
+    drawSpliff(ctx, px, py + 20, 22, 1.0);
+
+    // Eyebrow arch
+    ctx.strokeStyle = GB.darkest;
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(px - 22, eyeY - 12);
+    ctx.quadraticCurveTo(px, eyeY - 16, px + 22, eyeY - 12);
+    ctx.stroke();
+
+    // Arms
+    const armBaseY = py + 10;
+    const armLen = 22;
+    // Left arm
     ctx.fillStyle = GB.darkest;
-    ctx.font = "bold 11px 'Courier New', monospace";
-    ctx.fillText("PRESS SPACE OR TAP TO START", CANVAS_W / 2, 232);
-    ctx.font = "9px 'Courier New', monospace";
-    ctx.fillText(
-      "ARROWS/WASD: MOVE   SPACE: JUMP   P: PAUSE",
-      CANVAS_W / 2,
-      252,
+    ctx.fillRect(
+      Math.floor(px - armLen - 38),
+      armBaseY + leftArmUp - 1,
+      armLen + 2,
+      9,
     );
-    ctx.fillText(
-      "STOMP ENEMIES + GARDENERS  |  AVOID WEED KILLER!",
-      CANVAS_W / 2,
-      266,
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(Math.floor(px - armLen - 37), armBaseY + leftArmUp, armLen, 7);
+    drawMickeyGlove(
+      ctx,
+      Math.floor(px - armLen - 40),
+      armBaseY + leftArmUp + 3,
+      12,
+      false,
     );
-    ctx.fillText(
-      "WATCH PLANT POTS - GARDENER LURKS INSIDE!",
-      CANVAS_W / 2,
-      280,
+    // Right arm
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(Math.floor(px + 36), armBaseY + rightArmUp - 1, armLen + 2, 9);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(Math.floor(px + 37), armBaseY + rightArmUp, armLen, 7);
+    drawMickeyGlove(
+      ctx,
+      Math.floor(px + 58),
+      armBaseY + rightArmUp + 3,
+      12,
+      true,
     );
-    ctx.font = "8px 'Courier New', monospace";
+
+    ctx.restore();
+
+    // Legs (outside lean for natural feel)
+    const legBaseY = py + leafR * 0.9 + 10;
+    const legW2 = 10;
+    const thighH2 = 12;
+    const shinH2 = 13;
+    // Dance leg bob
+    const legBob = danceFrame % 2 === 0 ? -4 : 0;
+    const legBob2 = danceFrame % 2 === 1 ? -4 : 0;
+    const lBend = danceFrame % 2 === 0 ? -4 : 3;
+    const rBend = danceFrame % 2 === 1 ? -4 : 3;
+
+    // Left leg
+    const llX = Math.floor(px - 19);
+    const llKneeX = llX + lBend;
+    const llKneeY = legBaseY + legBob + thighH2;
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(llX - 1, legBaseY + legBob - 1, legW2 + 2, thighH2 + 2);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(llX, legBaseY + legBob, legW2, thighH2);
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.arc(llKneeX + legW2 / 2, llKneeY, legW2 * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.light;
+    ctx.beginPath();
+    ctx.arc(llKneeX + legW2 / 2, llKneeY, legW2 * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(llKneeX - 1, llKneeY, legW2 + 2, shinH2 + 1);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(llKneeX, llKneeY, legW2, shinH2);
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(llKneeX - 3, llKneeY + shinH2 - 1, legW2 + 8, 5);
+
+    // Right leg
+    const rlX = Math.floor(px + 9);
+    const rlKneeX = rlX + rBend;
+    const rlKneeY = legBaseY + legBob2 + thighH2;
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlX - 1, legBaseY + legBob2 - 1, legW2 + 2, thighH2 + 2);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(rlX, legBaseY + legBob2, legW2, thighH2);
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.arc(rlKneeX + legW2 / 2, rlKneeY, legW2 * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.light;
+    ctx.beginPath();
+    ctx.arc(rlKneeX + legW2 / 2, rlKneeY, legW2 * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlKneeX - 1, rlKneeY, legW2 + 2, shinH2 + 1);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(rlKneeX, rlKneeY, legW2, shinH2);
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(rlKneeX - 3, rlKneeY + shinH2 - 1, legW2 + 8, 5);
+
+    // ── Instructions (only shown when NOT suppressed by menu overlay) ──────────
+    if (!suppressPrompt) {
+      ctx.fillStyle = GB.darkest;
+      ctx.font = `bold 8px ${PIXEL_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("PRESS SPACE OR TAP TO START", CANVAS_W / 2, 258);
+      ctx.font = `7px 'Courier New', monospace`;
+      ctx.fillText(
+        "ARROWS: MOVE  |  SPACE: JUMP  |  P: PAUSE",
+        CANVAS_W / 2,
+        274,
+      );
+      ctx.fillText(
+        "STOMP ENEMIES + GARDENERS — AVOID WEED KILLER!",
+        CANVAS_W / 2,
+        287,
+      );
+    }
+
+    ctx.font = "7px 'Courier New', monospace";
     ctx.fillStyle = GB.dark;
     ctx.fillText(
       `© ${new Date().getFullYear()} SKUNK RUNNER  |  BUILT WITH CAFFEINE.AI`,
@@ -2566,15 +3044,15 @@ export function SkunkRunner() {
     drawHUD(ctx, gs);
 
     if (gs.phase === "paused") {
-      ctx.fillStyle = "rgba(15, 56, 15, 0.7)";
+      ctx.fillStyle = "rgba(15, 56, 15, 0.72)";
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
       ctx.fillStyle = GB.lightest;
       ctx.font = "bold 20px 'Courier New', monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("PAUSED", CANVAS_W / 2, CANVAS_H / 2 - 14);
+      ctx.fillText("PAUSED", CANVAS_W / 2, CANVAS_H / 2 - 38);
       ctx.font = "11px 'Courier New', monospace";
-      ctx.fillText("PRESS P TO RESUME", CANVAS_W / 2, CANVAS_H / 2 + 14);
+      ctx.fillText("PRESS P TO RESUME", CANVAS_W / 2, CANVAS_H / 2 - 14);
     }
 
     // Fast death fade overlay
@@ -2651,6 +3129,166 @@ export function SkunkRunner() {
     };
   }, [phase, startGame]);
 
+  const btnSz = BTN_SIZE_STYLES[settings.buttonSize];
+  const mobileBtnStyle: React.CSSProperties = {
+    background: GB.dark,
+    color: GB.lightest,
+    border: `3px solid ${GB.darkest}`,
+    borderBottom: `6px solid ${GB.darkest}`,
+    fontFamily: "monospace",
+    fontWeight: "bold",
+    cursor: "pointer",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+    touchAction: "none",
+    ...btnSz,
+  };
+
+  const jumpBtn = (
+    <button
+      type="button"
+      data-ocid="game.primary_button"
+      onPointerDown={() => {
+        ensureSound();
+        touchRef.current.jump = true;
+        keysRef.current.add("Space");
+      }}
+      onPointerUp={() => {
+        touchRef.current.jump = false;
+        keysRef.current.delete("Space");
+      }}
+      onPointerLeave={() => {
+        touchRef.current.jump = false;
+        keysRef.current.delete("Space");
+      }}
+      style={mobileBtnStyle}
+      aria-label="Jump"
+    >
+      JUMP
+    </button>
+  );
+
+  const leftBtn = (
+    <button
+      type="button"
+      data-ocid="game.secondary_button"
+      onPointerDown={() => {
+        touchRef.current.left = true;
+        keysRef.current.add("ArrowLeft");
+      }}
+      onPointerUp={() => {
+        touchRef.current.left = false;
+        keysRef.current.delete("ArrowLeft");
+      }}
+      onPointerLeave={() => {
+        touchRef.current.left = false;
+        keysRef.current.delete("ArrowLeft");
+      }}
+      style={mobileBtnStyle}
+      aria-label="Move left"
+    >
+      ◀
+    </button>
+  );
+
+  const rightBtn = (
+    <button
+      type="button"
+      data-ocid="game.secondary_button"
+      onPointerDown={() => {
+        touchRef.current.right = true;
+        keysRef.current.add("ArrowRight");
+      }}
+      onPointerUp={() => {
+        touchRef.current.right = false;
+        keysRef.current.delete("ArrowRight");
+      }}
+      onPointerLeave={() => {
+        touchRef.current.right = false;
+        keysRef.current.delete("ArrowRight");
+      }}
+      style={mobileBtnStyle}
+      aria-label="Move right"
+    >
+      ▶
+    </button>
+  );
+
+  // Layout A (default): JUMP + ◀ on left | ▶ on right
+  // Layout B: ◀ + ▶ on left | JUMP on right
+  // Layout C: JUMP on right | ◀ + ▶ on right (both right)
+  const controlLeft =
+    settings.layout === "A" ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {jumpBtn}
+        {leftBtn}
+      </div>
+    ) : settings.layout === "B" ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {leftBtn}
+        {rightBtn}
+      </div>
+    ) : (
+      // Layout C: nothing on left
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }} />
+    );
+
+  const controlRight =
+    settings.layout === "A" ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {rightBtn}
+      </div>
+    ) : settings.layout === "B" ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {jumpBtn}
+      </div>
+    ) : (
+      // Layout C: JUMP + ▶ on right; ◀ on right too
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {leftBtn}
+        {jumpBtn}
+        {rightBtn}
+      </div>
+    );
+
+  const PIXEL_FONT = "'Press Start 2P', 'Courier New', monospace";
+
+  const overlayPanelStyle: React.CSSProperties = {
+    background: "rgba(15, 56, 15, 0.92)",
+    border: `4px solid ${GB.light}`,
+    boxShadow: `6px 6px 0 ${GB.darkest}`,
+    padding: "24px 28px",
+    textAlign: "center",
+    maxWidth: 360,
+    width: "90%",
+    fontFamily: PIXEL_FONT,
+    color: GB.lightest,
+  };
+
+  const overlayBtnBase: React.CSSProperties = {
+    fontFamily: PIXEL_FONT,
+    cursor: "pointer",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+    touchAction: "none",
+    border: `2px solid ${GB.light}`,
+    padding: "10px 18px",
+    fontSize: 11,
+    letterSpacing: 1,
+  };
+
+  const activeBtnStyle: React.CSSProperties = {
+    ...overlayBtnBase,
+    background: GB.light,
+    color: GB.darkest,
+  };
+
+  const inactiveBtnStyle: React.CSSProperties = {
+    ...overlayBtnBase,
+    background: GB.dark,
+    color: GB.lightest,
+  };
+
   return (
     <div
       style={{
@@ -2680,6 +3318,7 @@ export function SkunkRunner() {
             boxShadow: `0 0 0 2px ${GB.darkest}, 8px 8px 0 ${GB.darkest}`,
             background: GB.darkest,
             lineHeight: 0,
+            position: "relative",
           }}
         >
           <canvas
@@ -2698,119 +3337,488 @@ export function SkunkRunner() {
               cursor: "none",
             }}
           />
-        </div>
-        {/* Pause overlay button - top right of canvas */}
-        <button
-          type="button"
-          data-ocid="game.toggle"
-          onPointerDown={togglePause}
-          style={{
-            position: "absolute",
-            top: 6,
-            right: 6,
-            background: "rgba(15,56,15,0.75)",
-            color: GB.lightest,
-            border: `2px solid ${GB.dark}`,
-            borderRadius: 4,
-            padding: "4px 8px",
-            fontFamily: "monospace",
-            fontSize: 16,
-            fontWeight: "bold",
-            cursor: "pointer",
-            userSelect: "none",
-            WebkitUserSelect: "none",
-            touchAction: "none",
-            zIndex: 10,
-            lineHeight: 1,
-          }}
-          aria-label="Pause"
-        >
-          ⏸
-        </button>
-        <div
-          style={{
-            background: GB.dark,
-            border: `4px solid ${GB.darkest}`,
-            borderTop: "none",
-            padding: "8px 16px",
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            width: "100%",
-            justifyContent: "space-between",
-            boxSizing: "border-box",
-          }}
-        >
-          {/* JUMP button - bottom left */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              data-ocid="game.primary_button"
-              onPointerDown={() => {
-                ensureSound();
-                keysRef.current.add("Space");
+
+          {/* ── PAUSE OVERLAY BUTTONS ────────────────────────────────────── */}
+          {phase === "paused" && (
+            <div
+              data-ocid="pause.panel"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "all",
+                gap: 10,
+                // Push buttons below the "PAUSED" text which is at ~canvas centre-38
+                paddingTop: "52%",
               }}
-              onPointerUp={() => keysRef.current.delete("Space")}
-              onPointerLeave={() => keysRef.current.delete("Space")}
-              style={largeBtnStyle}
-              aria-label="Jump"
             >
-              JUMP
-            </button>
-            <button
-              type="button"
-              data-ocid="game.secondary_button"
-              onPointerDown={() => keysRef.current.add("ArrowLeft")}
-              onPointerUp={() => keysRef.current.delete("ArrowLeft")}
-              onPointerLeave={() => keysRef.current.delete("ArrowLeft")}
-              style={largeBtnStyle}
-              aria-label="Move left"
-            >
-              ◀
-            </button>
-          </div>
-          <div
-            style={{
-              color: GB.lightest,
-              fontFamily: "monospace",
-              fontSize: 10,
-              textAlign: "center",
-              lineHeight: 1.4,
-            }}
-          >
-            <div>SCORE: {String(score).padStart(6, "0")}</div>
-            <div>BEST: {String(hiScore).padStart(6, "0")}</div>
-            {(phase === "start" || phase === "gameover") && (
               <button
                 type="button"
-                data-ocid="game.primary_button"
-                onPointerDown={startGame}
+                data-ocid="pause.resume.button"
+                onClick={togglePause}
                 style={{
-                  ...largeBtnStyle,
-                  background: GB.darkest,
-                  color: GB.lightest,
-                  padding: "4px 10px",
-                  marginTop: 4,
+                  fontFamily: PIXEL_FONT,
+                  background: GB.light,
+                  color: GB.darkest,
+                  border: `3px solid ${GB.darkest}`,
+                  borderBottom: `5px solid ${GB.darkest}`,
+                  padding: "9px 22px",
+                  fontSize: 10,
+                  letterSpacing: 1,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  width: 180,
                 }}
-                aria-label="Start game"
+                aria-label="Resume game"
               >
-                START
+                ▶ RESUME
               </button>
-            )}
-          </div>
-          {/* Right arrow - bottom right */}
+              <button
+                type="button"
+                data-ocid="pause.settings.button"
+                onClick={openSettingsFromPause}
+                style={{
+                  fontFamily: PIXEL_FONT,
+                  background: GB.dark,
+                  color: GB.lightest,
+                  border: `3px solid ${GB.darkest}`,
+                  borderBottom: `5px solid ${GB.darkest}`,
+                  padding: "9px 22px",
+                  fontSize: 10,
+                  letterSpacing: 1,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  width: 180,
+                }}
+                aria-label="Settings"
+              >
+                ⚙ SETTINGS
+              </button>
+              <button
+                type="button"
+                data-ocid="pause.mainmenu.button"
+                onClick={goToMainMenu}
+                style={{
+                  fontFamily: PIXEL_FONT,
+                  background: GB.darkest,
+                  color: GB.light,
+                  border: `3px solid ${GB.dark}`,
+                  borderBottom: `5px solid ${GB.darkest}`,
+                  padding: "9px 22px",
+                  fontSize: 10,
+                  letterSpacing: 1,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  width: 180,
+                }}
+                aria-label="Main menu"
+              >
+                ⌂ MAIN MENU
+              </button>
+            </div>
+          )}
+
+          {/* ── SETTINGS OVERLAY ─────────────────────────────────────────── */}
+          {phase === "settings" && (
+            <div
+              data-ocid="settings.panel"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "all",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  ...overlayPanelStyle,
+                  maxHeight: "95%",
+                  overflowY: "auto",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    letterSpacing: 2,
+                    marginBottom: 20,
+                    textShadow: `2px 2px 0 ${GB.darkest}`,
+                  }}
+                >
+                  SETTINGS
+                </div>
+
+                {/* Control Layout */}
+                <div style={{ marginBottom: 16, textAlign: "left" }}>
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: GB.light,
+                      marginBottom: 8,
+                      fontFamily: "monospace",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    CONTROL LAYOUT
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-ocid="settings.layout_a.button"
+                      onClick={() => updateSettings({ layout: "A" })}
+                      style={
+                        settings.layout === "A"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                      title="JUMP+◀ on left, ▶ on right"
+                    >
+                      A
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid="settings.layout_b.button"
+                      onClick={() => updateSettings({ layout: "B" })}
+                      style={
+                        settings.layout === "B"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                      title="◀+▶ on left, JUMP on right"
+                    >
+                      B
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid="settings.layout_c.button"
+                      onClick={() => updateSettings({ layout: "C" })}
+                      style={
+                        settings.layout === "C"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                      title="All buttons on right"
+                    >
+                      C
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 6,
+                      color: GB.light,
+                      marginTop: 6,
+                      fontFamily: "monospace",
+                      lineHeight: 1.8,
+                      textAlign: "center",
+                    }}
+                  >
+                    {settings.layout === "A" && "JUMP+◀ LEFT  |  ▶ RIGHT"}
+                    {settings.layout === "B" && "◀+▶ LEFT  |  JUMP RIGHT"}
+                    {settings.layout === "C" && "◀+JUMP+▶ ALL RIGHT"}
+                  </div>
+                </div>
+
+                {/* Button Size */}
+                <div style={{ marginBottom: 16, textAlign: "left" }}>
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: GB.light,
+                      marginBottom: 8,
+                      fontFamily: "monospace",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    BUTTON SIZE
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-ocid="settings.size_s.button"
+                      onClick={() => updateSettings({ buttonSize: "small" })}
+                      style={
+                        settings.buttonSize === "small"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                    >
+                      S
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid="settings.size_m.button"
+                      onClick={() => updateSettings({ buttonSize: "medium" })}
+                      style={
+                        settings.buttonSize === "medium"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                    >
+                      M
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid="settings.size_l.button"
+                      onClick={() => updateSettings({ buttonSize: "large" })}
+                      style={
+                        settings.buttonSize === "large"
+                          ? activeBtnStyle
+                          : inactiveBtnStyle
+                      }
+                    >
+                      L
+                    </button>
+                  </div>
+                </div>
+
+                {/* Game Speed */}
+                <div style={{ marginBottom: 16, textAlign: "left" }}>
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: GB.light,
+                      marginBottom: 8,
+                      fontFamily: "monospace",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    GAME SPEED
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 6,
+                        color: GB.light,
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      SLOW
+                    </span>
+                    <input
+                      type="range"
+                      data-ocid="settings.speed.input"
+                      min={0.5}
+                      max={2.0}
+                      step={0.1}
+                      value={settings.gameSpeed}
+                      onChange={(e) =>
+                        updateSettings({
+                          gameSpeed: Number.parseFloat(e.target.value),
+                        })
+                      }
+                      style={{
+                        flex: 1,
+                        accentColor: GB.light,
+                        cursor: "pointer",
+                        height: 4,
+                      }}
+                      aria-label="Game speed"
+                    />
+                    <span
+                      style={{
+                        fontSize: 6,
+                        color: GB.light,
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      FAST
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: GB.lightest,
+                      marginTop: 4,
+                      fontFamily: "monospace",
+                      textAlign: "center",
+                    }}
+                  >
+                    {settings.gameSpeed.toFixed(1)}x
+                  </div>
+                </div>
+
+                {/* Sound */}
+                <div style={{ marginBottom: 20, textAlign: "left" }}>
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: GB.light,
+                      marginBottom: 8,
+                      fontFamily: "monospace",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    SOUND
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-ocid="settings.sound.toggle"
+                      onClick={() =>
+                        updateSettings({ soundOn: !settings.soundOn })
+                      }
+                      style={
+                        settings.soundOn ? activeBtnStyle : inactiveBtnStyle
+                      }
+                      aria-label={settings.soundOn ? "Sound on" : "Sound off"}
+                    >
+                      {settings.soundOn ? "♪ ON" : "✕ OFF"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  data-ocid="settings.back.button"
+                  onClick={() => {
+                    const returnPhase = settingsReturnPhaseRef.current;
+                    settingsReturnPhaseRef.current = "start";
+                    if (returnPhase === "paused" && gsRef.current) {
+                      gsRef.current.phase = "paused";
+                      setPhase("paused");
+                    } else {
+                      setPhase("start");
+                    }
+                  }}
+                  style={{
+                    ...inactiveBtnStyle,
+                    width: "100%",
+                    fontSize: 10,
+                    padding: "10px 18px",
+                  }}
+                  aria-label="Back to menu"
+                >
+                  ← BACK
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Pause button - top right of canvas during gameplay */}
+        {(phase === "playing" || phase === "paused") && (
           <button
             type="button"
-            data-ocid="game.secondary_button"
-            onPointerDown={() => keysRef.current.add("ArrowRight")}
-            onPointerUp={() => keysRef.current.delete("ArrowRight")}
-            onPointerLeave={() => keysRef.current.delete("ArrowRight")}
-            style={largeBtnStyle}
-            aria-label="Move right"
+            data-ocid="game.toggle"
+            onPointerDown={togglePause}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              background: "rgba(15,56,15,0.75)",
+              color: GB.lightest,
+              border: `2px solid ${GB.dark}`,
+              borderRadius: 4,
+              padding: "4px 8px",
+              fontFamily: "monospace",
+              fontSize: 16,
+              fontWeight: "bold",
+              cursor: "pointer",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              touchAction: "none",
+              zIndex: 10,
+              lineHeight: 1,
+            }}
+            aria-label="Pause"
           >
-            ▶
+            ⏸
           </button>
-        </div>
+        )}
+
+        {/* Settings button - top right on start screen */}
+        {(phase === "start" || phase === "settings") && (
+          <button
+            type="button"
+            data-ocid="menu.settings_btn.button"
+            onClick={() => {
+              if (phase === "settings") {
+                setPhase("start");
+              } else {
+                settingsReturnPhaseRef.current = "start";
+                setPhase("settings");
+              }
+            }}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              background: "rgba(15,56,15,0.75)",
+              color: GB.lightest,
+              border: `2px solid ${GB.dark}`,
+              borderRadius: 4,
+              padding: "4px 10px",
+              fontFamily: "monospace",
+              fontSize: 14,
+              fontWeight: "bold",
+              cursor: "pointer",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              touchAction: "none",
+              zIndex: 10,
+              lineHeight: 1,
+            }}
+            aria-label="Settings"
+          >
+            ⚙
+          </button>
+        )}
+
+        {/* Mobile controls bar - only shown during gameplay */}
+        {(phase === "playing" || phase === "paused") && (
+          <div
+            style={{
+              background: GB.dark,
+              border: `4px solid ${GB.darkest}`,
+              borderTop: "none",
+              padding: "8px 16px",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              width: "100%",
+              justifyContent: "space-between",
+              boxSizing: "border-box",
+            }}
+          >
+            {controlLeft}
+            <div style={{ flex: 1 }} />
+            {controlRight}
+          </div>
+        )}
       </div>
 
       {phase === "gameover" && (
@@ -2840,10 +3848,12 @@ export function SkunkRunner() {
             <div
               style={{
                 color: GB.lightest,
-                fontSize: 28,
+                fontSize: 22,
+                fontFamily: PIXEL_FONT,
                 fontWeight: "bold",
-                letterSpacing: 4,
-                marginBottom: 8,
+                letterSpacing: 2,
+                marginBottom: 12,
+                textShadow: `3px 3px 0 ${GB.darkest}`,
               }}
             >
               GAME OVER
@@ -2887,19 +3897,3 @@ export function SkunkRunner() {
     </div>
   );
 }
-
-const largeBtnStyle: React.CSSProperties = {
-  background: GB.dark,
-  color: GB.lightest,
-  border: `3px solid ${GB.darkest}`,
-  borderBottom: `6px solid ${GB.darkest}`,
-  padding: "10px 14px",
-  fontFamily: "monospace",
-  fontSize: 22,
-  fontWeight: "bold",
-  cursor: "pointer",
-  userSelect: "none",
-  WebkitUserSelect: "none",
-  touchAction: "none",
-  minWidth: 72,
-};
