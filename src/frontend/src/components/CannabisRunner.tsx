@@ -809,14 +809,35 @@ function drawPlayer(
     ctx.restore();
     drawBloodshotEyes(ctx, cx - 5, top + 11, cx + 5, top + 11, 4.5);
     drawLeafMouth(ctx, cx, top + 19, 10);
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(cx - 20), top + 14, 5, 4);
-    ctx.fillRect(Math.floor(cx + 15), top + 14, 5, 4);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(cx - 19), top + 14, 4, 3);
-    ctx.fillRect(Math.floor(cx + 16), top + 14, 4, 3);
-    drawMickeyGlove(ctx, Math.floor(cx - 22), top + 16, 6, false);
-    drawMickeyGlove(ctx, Math.floor(cx + 22), top + 16, 6, true);
+    // Ducking: stick arms folded outward
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    // Left arm
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, top + 16);
+    ctx.lineTo(cx - 14, top + 14);
+    ctx.lineTo(cx - 20, top + 17);
+    ctx.stroke();
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(cx - 14, top + 14, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    drawMickeyGlove(ctx, Math.floor(cx - 22), top + 17, 6, false);
+    // Right arm
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cx + 6, top + 16);
+    ctx.lineTo(cx + 14, top + 14);
+    ctx.lineTo(cx + 20, top + 17);
+    ctx.stroke();
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(cx + 14, top + 14, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    drawMickeyGlove(ctx, Math.floor(cx + 22), top + 17, 6, true);
   } else {
     // ── Pluto-style swagger sway (only on ground, not ducking) ──
     const isMoving = Math.abs(p.vx) > 0.3;
@@ -843,114 +864,139 @@ function drawPlayer(
 
     if (spliffAlpha > 0) drawSpliff(ctx, leafCX, top + 22, 13, spliffAlpha);
 
+    // Two separate thicker eyebrows (not a single arc)
     ctx.strokeStyle = GB.darkest;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    // Left eyebrow — short thick arc above left eye
     ctx.beginPath();
-    ctx.moveTo(leafCX - 13, eyeY - 7);
-    ctx.quadraticCurveTo(leafCX, eyeY - 10, leafCX + 13, eyeY - 7);
+    ctx.moveTo(leafCX - 14, eyeY - 7);
+    ctx.quadraticCurveTo(leafCX - 8, eyeY - 11, leafCX - 2, eyeY - 8);
     ctx.stroke();
+    // Right eyebrow — short thick arc above right eye
+    ctx.beginPath();
+    ctx.moveTo(leafCX + 2, eyeY - 8);
+    ctx.quadraticCurveTo(leafCX + 8, eyeY - 11, leafCX + 14, eyeY - 7);
+    ctx.stroke();
+    ctx.lineCap = "butt";
 
-    // Arms — positioned so hand/glove is half-inside and half-outside the leaf body
+    // ── Stick-thin arms, anchored to leaf body centre ──────────────────────────
     const armBob = p.animFrame % 2 === 0 ? -1 : 1;
     const leftArmBob = isMoving && p.onGround ? -armBob * 3 : armBob;
     const rightArmBob = isMoving && p.onGround ? armBob * 3 : armBob;
-    // Arm starts inside the leaf (leafCX ± 22) so the forearm spans across the body edge
-    const armY = top + 22;
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(leafCX - 30), armY + leftArmBob - 1, 14, 6);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(leafCX - 29), armY + leftArmBob, 12, 4);
-    // Glove sits half out — placed at leafCX - 32 so centre is at body edge
-    drawMickeyGlove(
-      ctx,
-      Math.floor(leafCX - 32),
-      armY + leftArmBob + 2,
-      8,
-      false,
-    );
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(leafCX + 16), armY + rightArmBob - 1, 14, 6);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(leafCX + 17), armY + rightArmBob, 12, 4);
-    drawMickeyGlove(
-      ctx,
-      Math.floor(leafCX + 32),
-      armY + rightArmBob + 2,
-      8,
-      true,
-    );
+    // Shoulder anchor: emerges from leaf stem (leafCX, leafCY + small offset)
+    const shoulderY = leafCY + 12; // attached to lower part of main leaf body
+    const shoulderOffsetX = 8; // slight x offset left/right of centre
+
+    // Upper arm length and elbow position
+    const uArmLen = 14;
+    const fArmLen = 13;
+
+    // Left arm: shoulder → elbow → glove
+    const lShX = leafCX - shoulderOffsetX;
+    const lShY = shoulderY;
+    const lElbX = lShX - uArmLen + leftArmBob * 0.5;
+    const lElbY = lShY + 8 + leftArmBob;
+    const lGlvX = lElbX - fArmLen + leftArmBob * 0.4;
+    const lGlvY = lElbY - 4 + leftArmBob;
+
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(lShX, lShY);
+    ctx.lineTo(lElbX, lElbY);
+    ctx.lineTo(lGlvX, lGlvY);
+    ctx.stroke();
+    // Elbow joint dot
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(lElbX, lElbY, 3, 0, Math.PI * 2);
+    ctx.fill();
+    drawMickeyGlove(ctx, Math.floor(lGlvX), Math.floor(lGlvY), 8, false);
+
+    // Right arm: shoulder → elbow → glove
+    const rShX = leafCX + shoulderOffsetX;
+    const rShY = shoulderY;
+    const rElbX = rShX + uArmLen - rightArmBob * 0.5;
+    const rElbY = rShY + 8 + rightArmBob;
+    const rGlvX = rElbX + fArmLen - rightArmBob * 0.4;
+    const rGlvY = rElbY - 4 + rightArmBob;
+
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(rShX, rShY);
+    ctx.lineTo(rElbX, rElbY);
+    ctx.lineTo(rGlvX, rGlvY);
+    ctx.stroke();
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(rElbX, rElbY, 3, 0, Math.PI * 2);
+    ctx.fill();
+    drawMickeyGlove(ctx, Math.floor(rGlvX), Math.floor(rGlvY), 8, true);
 
     ctx.restore();
 
-    // Two-segment legs with visible knees, curled leaf feet instead of boots
-    const legBaseY = top + p.height - 12;
-    const legW = 6;
-    const thighH = 7;
-    const shinH = 8;
-    const leftBend = p.animFrame % 2 === 0 ? -3 : 2;
-    const rightBend = p.animFrame % 2 === 1 ? -3 : 2;
+    // ── Stick-thin legs, anchored to bottom of leaf body ──────────────────────
+    // Hip anchors emerge from the bottom of the leaf (leafCY + leafR-ish area)
+    const hipY = leafCY + 30; // bottom of leaf body
+    const hipOffsetX = 7;
+    const thighLen = 14;
+    const shinLen = 14;
+
     const leftLift = p.animFrame % 2 === 0 ? -3 : 0;
     const rightLift = p.animFrame % 2 === 1 ? -3 : 0;
+    const leftBendX = p.animFrame % 2 === 0 ? -4 : 2;
+    const rightBendX = p.animFrame % 2 === 1 ? -4 : 2;
 
     // ─ Left leg ─
-    const llThighX = Math.floor(cx - 11);
-    const llThighY = legBaseY + leftLift;
-    const llKneeX = llThighX + leftBend;
-    const llKneeY = llThighY + thighH;
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(llThighX - 1, llThighY - 1, legW + 2, thighH + 2);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(llThighX, llThighY, legW, thighH);
-    ctx.fillStyle = GB.darkest;
+    const lHipX = leafCX - hipOffsetX;
+    const lHipY = hipY + leftLift;
+    const lKneeX = lHipX + leftBendX;
+    const lKneeY = lHipY + thighLen;
+    const lFootX = lKneeX - 2;
+    const lFootY = lKneeY + shinLen;
+
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.arc(llKneeX + legW / 2, llKneeY, legW * 0.7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = GB.light;
+    ctx.moveTo(lHipX, lHipY);
+    ctx.lineTo(lKneeX, lKneeY);
+    ctx.lineTo(lFootX, lFootY);
+    ctx.stroke();
+    // Knee joint dot
+    ctx.fillStyle = "#000000";
     ctx.beginPath();
-    ctx.arc(
-      llKneeX + legW / 2 - 0.5,
-      llKneeY - 0.5,
-      legW * 0.45,
-      0,
-      Math.PI * 2,
-    );
+    ctx.arc(lKneeX, lKneeY, 3, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(llKneeX - 1, llKneeY, legW + 2, shinH + 1);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(llKneeX, llKneeY, legW, shinH);
-    // Curled leaf foot (left) — a small cannabis-style curled leaf replacing the boot
-    drawCurledLeafFoot(ctx, llKneeX + legW / 2, llKneeY + shinH, 9, false);
+    // Curled leaf foot (left)
+    drawCurledLeafFoot(ctx, lFootX, lFootY, 9, false);
 
     // ─ Right leg ─
-    const rlThighX = Math.floor(cx + 5);
-    const rlThighY = legBaseY + rightLift;
-    const rlKneeX = rlThighX + rightBend;
-    const rlKneeY = rlThighY + thighH;
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(rlThighX - 1, rlThighY - 1, legW + 2, thighH + 2);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(rlThighX, rlThighY, legW, thighH);
-    ctx.fillStyle = GB.darkest;
+    const rHipX = leafCX + hipOffsetX;
+    const rHipY = hipY + rightLift;
+    const rKneeX = rHipX + rightBendX;
+    const rKneeY = rHipY + thighLen;
+    const rFootX = rKneeX + 2;
+    const rFootY = rKneeY + shinLen;
+
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(rlKneeX + legW / 2, rlKneeY, legW * 0.7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = GB.light;
+    ctx.moveTo(rHipX, rHipY);
+    ctx.lineTo(rKneeX, rKneeY);
+    ctx.lineTo(rFootX, rFootY);
+    ctx.stroke();
+    ctx.fillStyle = "#000000";
     ctx.beginPath();
-    ctx.arc(
-      rlKneeX + legW / 2 - 0.5,
-      rlKneeY - 0.5,
-      legW * 0.45,
-      0,
-      Math.PI * 2,
-    );
+    ctx.arc(rKneeX, rKneeY, 3, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = GB.darkest;
-    ctx.fillRect(rlKneeX - 1, rlKneeY, legW + 2, shinH + 1);
-    ctx.fillStyle = GB.dark;
-    ctx.fillRect(rlKneeX, rlKneeY, legW, shinH);
     // Curled leaf foot (right)
-    drawCurledLeafFoot(ctx, rlKneeX + legW / 2, rlKneeY + shinH, 9, true);
+    drawCurledLeafFoot(ctx, rFootX, rFootY, 9, true);
   }
 
   ctx.restore();
