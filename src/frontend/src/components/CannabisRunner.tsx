@@ -692,9 +692,9 @@ function drawCurledLeafFoot(
   // The foot is a small 3-finger mini leaf curled to the side
   // Centre finger points forward (right), two side fingers curl up and down
   const footFingers: [number, number, number, number][] = [
-    [-Math.PI / 2, 1.0, 0.28, 0], // main toe — points right (forward)
-    [-Math.PI / 2 + 0.55, 0.72, 0.2, 0.15], // upper curl — angled slightly up
-    [-Math.PI / 2 - 0.55, 0.72, 0.2, -0.15], // lower curl — angled slightly down
+    [Math.PI / 2, 1.0, 0.28, 0], // main toe — points right (forward)
+    [Math.PI / 2 - 0.55, 0.72, 0.2, -0.15], // upper curl — angled slightly up
+    [Math.PI / 2 + 0.55, 0.72, 0.2, 0.15], // lower curl — angled slightly down
   ];
 
   for (const [angle, lenFactor, hwFactor, curl] of footFingers) {
@@ -793,6 +793,15 @@ function drawPlayer(
   const top = Math.floor(p.y);
 
   ctx.save();
+
+  // Scale the entire character down 15%
+  const CHAR_SCALE = 0.85;
+  const pivotX = cx;
+  const pivotY = top + p.height / 2;
+  ctx.translate(pivotX, pivotY);
+  ctx.scale(CHAR_SCALE, CHAR_SCALE);
+  ctx.translate(-pivotX, -pivotY);
+
   if (!p.facingRight) {
     ctx.scale(-1, 1);
     ctx.translate(-2 * cx, 0);
@@ -802,14 +811,7 @@ function drawPlayer(
     const leafCX = cx;
     const leafCY = top + 18;
     const leafR = 16;
-    ctx.save();
-    ctx.scale(1, 0.65);
-    ctx.translate(0, leafCY / 0.65 - leafCY);
-    drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
-    ctx.restore();
-    drawBloodshotEyes(ctx, cx - 5, top + 11, cx + 5, top + 11, 4.5);
-    drawLeafMouth(ctx, cx, top + 19, 10);
-    // Ducking: stick arms folded outward
+    // Ducking: draw arms FIRST so leaf body/eyes paint over them
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.5;
     ctx.lineCap = "round";
@@ -838,6 +840,14 @@ function drawPlayer(
     ctx.arc(cx + 14, top + 14, 2.5, 0, Math.PI * 2);
     ctx.fill();
     drawMickeyGlove(ctx, Math.floor(cx + 22), top + 17, 6, true);
+    // Leaf body and face drawn OVER arms
+    ctx.save();
+    ctx.scale(1, 0.65);
+    ctx.translate(0, leafCY / 0.65 - leafCY);
+    drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
+    ctx.restore();
+    drawBloodshotEyes(ctx, cx - 5, top + 11, cx + 5, top + 11, 4.5);
+    drawLeafMouth(ctx, cx, top + 19, 10);
   } else {
     // ── Pluto-style swagger sway (only on ground, not ducking) ──
     const isMoving = Math.abs(p.vx) > 0.3;
@@ -851,54 +861,31 @@ function drawPlayer(
     ctx.translate(-cx - swayX, -top - p.height / 2);
 
     const leafCX = cx + swayX;
-    // Bigger leaf radius so more leaf is visible below the face
-    const leafR = 40;
-    // Leaf centre raised slightly so lower lobes extend further down, giving more exposed bottom leaf
-    const leafCY = top + 14;
-    drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
+    // Leaf radius scaled down ~15% from original 40 → 34
+    const leafR = 34;
+    // Leaf centre position
+    const leafCY = top + 22;
 
-    // Eyes sit higher up on the leaf face
-    const eyeY = top + 10;
-    drawBloodshotEyes(ctx, leafCX - 8, eyeY, leafCX + 8, eyeY, 6);
-    drawLeafMouth(ctx, leafCX, top + 22, 13);
+    // ── Stick-thin arms drawn FIRST so leaf body/eyes paint over them ──────────
+    const shoulderY = leafCY - 5; // between 2nd and 3rd leaf from bottom
+    const shoulderOffsetX = 7;
+    const uArmLen = 12;
+    const fArmLen = 11;
 
-    if (spliffAlpha > 0) drawSpliff(ctx, leafCX, top + 22, 13, spliffAlpha);
-
-    // Two separate thicker eyebrows (not a single arc)
-    ctx.strokeStyle = GB.darkest;
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = "round";
-    // Left eyebrow — short thick arc above left eye
-    ctx.beginPath();
-    ctx.moveTo(leafCX - 14, eyeY - 7);
-    ctx.quadraticCurveTo(leafCX - 8, eyeY - 11, leafCX - 2, eyeY - 8);
-    ctx.stroke();
-    // Right eyebrow — short thick arc above right eye
-    ctx.beginPath();
-    ctx.moveTo(leafCX + 2, eyeY - 8);
-    ctx.quadraticCurveTo(leafCX + 8, eyeY - 11, leafCX + 14, eyeY - 7);
-    ctx.stroke();
-    ctx.lineCap = "butt";
-
-    // ── Stick-thin arms, anchored to leaf body centre ──────────────────────────
-    const armBob = p.animFrame % 2 === 0 ? -1 : 1;
-    const leftArmBob = isMoving && p.onGround ? -armBob * 3 : armBob;
-    const rightArmBob = isMoving && p.onGround ? armBob * 3 : armBob;
-    // Shoulder anchor: emerges from leaf stem (leafCX, leafCY + small offset)
-    const shoulderY = leafCY + 12; // attached to lower part of main leaf body
-    const shoulderOffsetX = 8; // slight x offset left/right of centre
-
-    // Upper arm length and elbow position
-    const uArmLen = 14;
-    const fArmLen = 13;
+    // Arms swing opposite to legs for natural walk — still when not walking
+    const armWalkPhase = (p.animFrame / 4) * Math.PI * 2;
+    const armSwing = isMoving && p.onGround ? 4 : 0;
+    // Left arm swings forward when right leg goes forward (opposite phase to left leg)
+    const lArmSwingY = Math.sin(armWalkPhase + Math.PI) * armSwing;
+    const rArmSwingY = Math.sin(armWalkPhase) * armSwing;
 
     // Left arm: shoulder → elbow → glove
     const lShX = leafCX - shoulderOffsetX;
     const lShY = shoulderY;
-    const lElbX = lShX - uArmLen + leftArmBob * 0.5;
-    const lElbY = lShY + 8 + leftArmBob;
-    const lGlvX = lElbX - fArmLen + leftArmBob * 0.4;
-    const lGlvY = lElbY - 4 + leftArmBob;
+    const lElbX = lShX - uArmLen;
+    const lElbY = lShY + 8 + lArmSwingY;
+    const lGlvX = lElbX - fArmLen * 0.85;
+    const lGlvY = lElbY - 4 + lArmSwingY * 0.5;
 
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.5;
@@ -909,7 +896,6 @@ function drawPlayer(
     ctx.lineTo(lElbX, lElbY);
     ctx.lineTo(lGlvX, lGlvY);
     ctx.stroke();
-    // Elbow joint dot
     ctx.fillStyle = "#000000";
     ctx.beginPath();
     ctx.arc(lElbX, lElbY, 3, 0, Math.PI * 2);
@@ -919,10 +905,10 @@ function drawPlayer(
     // Right arm: shoulder → elbow → glove
     const rShX = leafCX + shoulderOffsetX;
     const rShY = shoulderY;
-    const rElbX = rShX + uArmLen - rightArmBob * 0.5;
-    const rElbY = rShY + 8 + rightArmBob;
-    const rGlvX = rElbX + fArmLen - rightArmBob * 0.4;
-    const rGlvY = rElbY - 4 + rightArmBob;
+    const rElbX = rShX + uArmLen;
+    const rElbY = rShY + 8 + rArmSwingY;
+    const rGlvX = rElbX + fArmLen * 0.85;
+    const rGlvY = rElbY - 4 + rArmSwingY * 0.5;
 
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.5;
@@ -937,27 +923,65 @@ function drawPlayer(
     ctx.fill();
     drawMickeyGlove(ctx, Math.floor(rGlvX), Math.floor(rGlvY), 8, true);
 
+    // ── Leaf body drawn OVER arms ──────────────────────────────────────────────
+    drawCannabisLeafShape(ctx, leafCX, leafCY, leafR, GB.dark, GB.darkest);
+
+    // Eyes sit higher up on the leaf face
+    const eyeY = top + 18;
+    drawBloodshotEyes(ctx, leafCX - 7, eyeY, leafCX + 7, eyeY, 5.5);
+    drawLeafMouth(ctx, leafCX, top + 29, 11);
+
+    if (spliffAlpha > 0) drawSpliff(ctx, leafCX, top + 29, 11, spliffAlpha);
+
+    // Two separate thicker eyebrows (not a single arc)
+    ctx.strokeStyle = GB.darkest;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    // Left eyebrow — short thick arc above left eye
+    ctx.beginPath();
+    ctx.moveTo(leafCX - 12, eyeY - 6);
+    ctx.quadraticCurveTo(leafCX - 7, eyeY - 9, leafCX - 2, eyeY - 7);
+    ctx.stroke();
+    // Right eyebrow — short thick arc above right eye
+    ctx.beginPath();
+    ctx.moveTo(leafCX + 2, eyeY - 7);
+    ctx.quadraticCurveTo(leafCX + 7, eyeY - 9, leafCX + 12, eyeY - 6);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+
     ctx.restore();
 
     // ── Stick-thin legs, anchored to bottom of leaf body ──────────────────────
-    // Hip anchors emerge from the bottom of the leaf (leafCY + leafR-ish area)
-    const hipY = leafCY + 30; // bottom of leaf body
-    const hipOffsetX = 7;
-    const thighLen = 14;
-    const shinLen = 14;
+    const hipY = leafCY + 8;
+    const hipOffsetX = 6;
+    const thighLen = 13;
+    const shinLen = 13;
 
-    const leftLift = p.animFrame % 2 === 0 ? -3 : 0;
-    const rightLift = p.animFrame % 2 === 1 ? -3 : 0;
-    const leftBendX = p.animFrame % 2 === 0 ? -4 : 2;
-    const rightBendX = p.animFrame % 2 === 1 ? -4 : 2;
+    // Walk cycle: smooth sine-wave alternating stride — one leg forward, one back
+    // animFrame cycles 0-3. When still, animFrame=0 → neutral standing pose.
+    const walkPhase = (p.animFrame / 4) * Math.PI * 2; // 0 → 2π over 4 frames
+    const isWalking = Math.abs(p.vx) > 0.3 && p.onGround;
+
+    // Thigh swing angle: left and right legs are opposite phase
+    const thighSwing = isWalking ? 0.45 : 0; // max swing in radians
+    const lThighAngle = Math.sin(walkPhase) * thighSwing;
+    const rThighAngle = Math.sin(walkPhase + Math.PI) * thighSwing;
+
+    // Knee bend: always bent slightly forward during swing
+    const lShinAngle = isWalking
+      ? Math.max(0, Math.sin(walkPhase - 0.4)) * 0.5
+      : 0;
+    const rShinAngle = isWalking
+      ? Math.max(0, Math.sin(walkPhase + Math.PI - 0.4)) * 0.5
+      : 0;
 
     // ─ Left leg ─
     const lHipX = leafCX - hipOffsetX;
-    const lHipY = hipY + leftLift;
-    const lKneeX = lHipX + leftBendX;
-    const lKneeY = lHipY + thighLen;
-    const lFootX = lKneeX - 2;
-    const lFootY = lKneeY + shinLen;
+    const lHipY = hipY;
+    const lKneeX = lHipX + Math.sin(lThighAngle) * thighLen;
+    const lKneeY = lHipY + Math.cos(lThighAngle) * thighLen;
+    const lFootX = lKneeX + Math.sin(lThighAngle + lShinAngle) * shinLen;
+    const lFootY = lKneeY + Math.cos(lThighAngle + lShinAngle) * shinLen;
 
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.5;
@@ -968,21 +992,20 @@ function drawPlayer(
     ctx.lineTo(lKneeX, lKneeY);
     ctx.lineTo(lFootX, lFootY);
     ctx.stroke();
-    // Knee joint dot
     ctx.fillStyle = "#000000";
     ctx.beginPath();
     ctx.arc(lKneeX, lKneeY, 3, 0, Math.PI * 2);
     ctx.fill();
-    // Curled leaf foot (left)
-    drawCurledLeafFoot(ctx, lFootX, lFootY, 9, false);
+    // Foot faces forward when walking, straight down when still
+    drawCurledLeafFoot(ctx, lFootX, lFootY, 9, true);
 
     // ─ Right leg ─
     const rHipX = leafCX + hipOffsetX;
-    const rHipY = hipY + rightLift;
-    const rKneeX = rHipX + rightBendX;
-    const rKneeY = rHipY + thighLen;
-    const rFootX = rKneeX + 2;
-    const rFootY = rKneeY + shinLen;
+    const rHipY = hipY;
+    const rKneeX = rHipX + Math.sin(rThighAngle) * thighLen;
+    const rKneeY = rHipY + Math.cos(rThighAngle) * thighLen;
+    const rFootX = rKneeX + Math.sin(rThighAngle + rShinAngle) * shinLen;
+    const rFootY = rKneeY + Math.cos(rThighAngle + rShinAngle) * shinLen;
 
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.5;
@@ -995,7 +1018,7 @@ function drawPlayer(
     ctx.beginPath();
     ctx.arc(rKneeX, rKneeY, 3, 0, Math.PI * 2);
     ctx.fill();
-    // Curled leaf foot (right)
+    // Foot faces forward
     drawCurledLeafFoot(ctx, rFootX, rFootY, 9, true);
   }
 
@@ -2027,9 +2050,9 @@ function createInitialGameState(hiScore: number, gameSpeed = 1.0): GameState {
     worldOffset: 0,
     player: {
       x: PLAYER_START_X,
-      y: GROUND_Y - 46,
+      y: GROUND_Y - 61,
       width: 34,
-      height: 46,
+      height: 61,
       vx: 0,
       vy: 0,
       onGround: true,
@@ -2222,10 +2245,18 @@ function updateGame(
   }
 
   if (p.invincibleTimer > 0) p.invincibleTimer--;
-  p.animTimer++;
-  if (p.animTimer > 8) {
+  // Only advance walk animation when actively moving on the ground
+  const isActivelyWalking = Math.abs(p.vx) > 0.3 && p.onGround;
+  if (isActivelyWalking) {
+    p.animTimer++;
+    if (p.animTimer > 8) {
+      p.animTimer = 0;
+      p.animFrame = (p.animFrame + 1) % 4;
+    }
+  } else if (!isActivelyWalking) {
+    // Reset to neutral standing frame when still or airborne
+    p.animFrame = 0;
     p.animTimer = 0;
-    p.animFrame = (p.animFrame + 1) % 4;
   }
   p.wasOnGround = wasOnGround;
 
@@ -2810,40 +2841,35 @@ export function SkunkRunner() {
     ctx.fillStyle = GB.light;
     ctx.fillText("RUNNER", CANVAS_W / 2, titleY2);
 
-    // ── Dancing character ─────────────────────────────────────────────────────────
+    // ── Dancing character (−15% width, −20% height vs original) ──────────────────
     const px = CANVAS_W / 2;
-    const leafR = 52;
+    const leafR = 44; // was 52, scaled down ~15%
     // Dance frame: 6-frame cycle at 200ms each
     const danceFrame = Math.floor(now / 200) % 6;
     // Body bounce: frame 4 = up, frame 5 = down (squash), else neutral
-    const bodyBounce = danceFrame === 4 ? -4 : danceFrame === 5 ? 3 : 0;
+    const bodyBounce = danceFrame === 4 ? -3 : danceFrame === 5 ? 3 : 0;
     // Body lean angle
     const bodyLean = danceFrame === 1 ? 0.15 : danceFrame === 3 ? -0.15 : 0;
-    // Arm angles:
-    // frame 0: left arm up, right down
-    // frame 1: both at sides
-    // frame 2: right arm up, left down
-    // frame 3: both at sides
-    // frame 4: both raised
-    // frame 5: both lowered
+    // Arm angles
     const leftArmUp =
       danceFrame === 0
-        ? -18
+        ? -15
         : danceFrame === 4
-          ? -14
+          ? -12
           : danceFrame === 5
-            ? 6
+            ? 5
             : 2;
     const rightArmUp =
       danceFrame === 2
-        ? -18
+        ? -15
         : danceFrame === 4
-          ? -14
+          ? -12
           : danceFrame === 5
-            ? 6
+            ? 5
             : 2;
 
-    const py = 165 + bodyBounce;
+    // py shifted up slightly to compensate for shorter legs (−20% height)
+    const py = 162 + bodyBounce;
 
     ctx.save();
     ctx.translate(px, py + leafR * 0.5);
@@ -2855,60 +2881,66 @@ export function SkunkRunner() {
 
     // Eyes
     const eyeY = py + 2;
-    drawBloodshotEyes(ctx, px - 13, eyeY, px + 13, eyeY, 11);
+    drawBloodshotEyes(ctx, px - 11, eyeY, px + 11, eyeY, 9.5);
 
     // Mouth + spliff always visible on intro
-    drawLeafMouth(ctx, px, py + 20, 22);
-    drawSpliff(ctx, px, py + 20, 22, 1.0);
+    drawLeafMouth(ctx, px, py + 17, 19);
+    drawSpliff(ctx, px, py + 17, 19, 1.0);
 
-    // Eyebrow arch
+    // Eyebrows (two separate arched brows)
     ctx.strokeStyle = GB.darkest;
-    ctx.lineWidth = 2.0;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(px - 22, eyeY - 12);
-    ctx.quadraticCurveTo(px, eyeY - 16, px + 22, eyeY - 12);
+    ctx.moveTo(px - 18, eyeY - 10);
+    ctx.quadraticCurveTo(px - 11, eyeY - 14, px - 2, eyeY - 11);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(px + 2, eyeY - 11);
+    ctx.quadraticCurveTo(px + 11, eyeY - 14, px + 18, eyeY - 10);
+    ctx.stroke();
+    ctx.lineCap = "butt";
 
-    // Arms
-    const armBaseY = py + 10;
-    const armLen = 22;
+    // Arms — anchored between 2nd and 3rd leaf from bottom (same proportional position)
+    const armBaseY = py - 2; // between mid and lower leaf layers
+    const armLen = 19;
     // Left arm
     ctx.fillStyle = GB.darkest;
     ctx.fillRect(
-      Math.floor(px - armLen - 38),
+      Math.floor(px - armLen - 32),
       armBaseY + leftArmUp - 1,
       armLen + 2,
-      9,
+      8,
     );
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(px - armLen - 37), armBaseY + leftArmUp, armLen, 7);
+    ctx.fillRect(Math.floor(px - armLen - 31), armBaseY + leftArmUp, armLen, 6);
     drawMickeyGlove(
       ctx,
-      Math.floor(px - armLen - 40),
+      Math.floor(px - armLen - 34),
       armBaseY + leftArmUp + 3,
-      12,
+      11,
       false,
     );
     // Right arm
     ctx.fillStyle = GB.darkest;
-    ctx.fillRect(Math.floor(px + 36), armBaseY + rightArmUp - 1, armLen + 2, 9);
+    ctx.fillRect(Math.floor(px + 30), armBaseY + rightArmUp - 1, armLen + 2, 8);
     ctx.fillStyle = GB.dark;
-    ctx.fillRect(Math.floor(px + 37), armBaseY + rightArmUp, armLen, 7);
+    ctx.fillRect(Math.floor(px + 31), armBaseY + rightArmUp, armLen, 6);
     drawMickeyGlove(
       ctx,
-      Math.floor(px + 58),
+      Math.floor(px + 49),
       armBaseY + rightArmUp + 3,
-      12,
+      11,
       true,
     );
 
     ctx.restore();
 
-    // Legs (outside lean for natural feel)
-    const legBaseY = py + leafR * 0.9 + 10;
-    const legW2 = 10;
-    const thighH2 = 12;
-    const shinH2 = 13;
+    // Legs — shorter to match −20% height reduction
+    const legBaseY = py + leafR * 0.9 + 8;
+    const legW2 = 9;
+    const thighH2 = 10; // was 12
+    const shinH2 = 10; // was 13
     // Dance leg bob
     const legBob = danceFrame % 2 === 0 ? -4 : 0;
     const legBob2 = danceFrame % 2 === 1 ? -4 : 0;
