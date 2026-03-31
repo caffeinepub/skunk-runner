@@ -794,14 +794,6 @@ function drawPlayer(
 
   ctx.save();
 
-  // Scale the entire character down 15%
-  const CHAR_SCALE = 0.85;
-  const pivotX = cx;
-  const pivotY = top + p.height / 2;
-  ctx.translate(pivotX, pivotY);
-  ctx.scale(CHAR_SCALE, CHAR_SCALE);
-  ctx.translate(-pivotX, -pivotY);
-
   if (!p.facingRight) {
     ctx.scale(-1, 1);
     ctx.translate(-2 * cx, 0);
@@ -861,8 +853,7 @@ function drawPlayer(
     ctx.translate(-cx - swayX, -top - p.height / 2);
 
     const leafCX = cx + swayX;
-    // Leaf radius scaled down ~15% from original 40 → 34
-    const leafR = 34;
+    const leafR = 40;
     // Leaf centre position
     const leafCY = top + 22;
 
@@ -2841,9 +2832,9 @@ export function SkunkRunner() {
     ctx.fillStyle = GB.light;
     ctx.fillText("RUNNER", CANVAS_W / 2, titleY2);
 
-    // ── Dancing character (−15% width, −20% height vs original) ──────────────────
+    // ── Dancing character ──────────────────────────────────────────────────────────
     const px = CANVAS_W / 2;
-    const leafR = 44; // was 52, scaled down ~15%
+    const leafR = 52;
     // Dance frame: 6-frame cycle at 200ms each
     const danceFrame = Math.floor(now / 200) % 6;
     // Body bounce: frame 4 = up, frame 5 = down (squash), else neutral
